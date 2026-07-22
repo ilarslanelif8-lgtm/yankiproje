@@ -2,12 +2,13 @@ import os
 import json
 import logging
 import requests
+import urllib.parse
+from bs4 import BeautifulSoup
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, redirect, url_for, flash, Response, stream_with_context
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-from googlesearch import search
 
 logging.basicConfig(level=logging.INFO)
 
@@ -27,10 +28,9 @@ ASSISTANT_NAME = "Yankı"
 MODEL_NAME = "Yankı-AI"
 
 SYSTEM_PROMPT = (
-    "Sen 'Yankı' adında son derece akıllı, samimi ve Türkçe konuşan bir yapay zeka asistansın. "
-    "Kullanıcıya nazik, net ve imla kurallarına uygun yanıtlar ver. "
-    "Sana sağlanan Google internet arama verilerini kullanarak canlı/güncel bilgileri (altın, döviz, hava durumu, saat, haberler) eksiksiz sun. "
-    "Kullanıcı görsel yüklediyse görseldeki detayları dikkatlice analiz edip yanıtla."
+    "Sen 'Yankı' adında akıllı ve Türkçe konuşan bir yapay zeka asistansın. "
+    "Kullanıcıya nazik ve doğru yanıtlar ver. "
+    "Sana sunulan CANLI GOOGLE ARAMA BİLGİLERİNİ kullanarak altın fiyatı, hava durumu, haberler, maç sonuçları ve saat sorularına EN GÜNCEL verilerle net cevap ver."
 )
 
 class User(UserMixin, db.Model):
@@ -60,19 +60,34 @@ def load_user(user_id):
 with app.app_context():
     db.create_all()
 
-def search_google(query):
-    """Google üzerinde canlı arama yapıp link ve özet getirir"""
+def search_google_live(query):
+    """Google'da doğrudan canlı arama yapıp güncel verileri çeker"""
     try:
-        results = []
-        # Google'dan en alakalı 3 sonucu çekiyoruz
-        for url in search(query, num_results=3, lang="tr"):
-            results.append(f"Kaynak Linki: {url}")
-        if results:
-            return "\n".join(results)
-        return ""
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        encoded_query = urllib.parse.quote(query)
+        url = f"https://www.google.com/search?q={encoded_query}&hl=tr"
+        
+        response = requests.get(url, headers=headers, timeout=6)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            snippets = []
+            # Google arama özetlerini topla
+            for div in soup.find_all(['div', 'span']):
+                text = div.get_text().strip()
+                if len(text) > 40 and not text.startswith("http") and text not in snippets:
+                    snippets.append(text)
+                    if len(snippets) >= 6:
+                        break
+            
+            if snippets:
+                return "\n".join(snippets)
     except Exception as e:
         logging.error(f"Google Arama hatası: {e}")
-        return ""
+    
+    return ""
 
 @app.route("/")
 @login_required
@@ -136,7 +151,6 @@ def chat():
     if not user_message and not image_base64:
         return jsonify({"error": "Mesaj veya görsel boş olamaz."}), 400
 
-    # Kullanıcı mesajını kaydet
     user_msg_record = ChatMessage(user_id=current_user.id, role="user", content=user_message, image_url=image_base64)
     db.session.add(user_msg_record)
     db.session.commit()
@@ -147,22 +161,21 @@ def chat():
     api_key = os.environ.get("GROQ_API_KEY", "")
 
     search_context = ""
-    # Görsel yoksa doğrudan Google araması yaptır
+    # Görsel yüklenmediyse doğrudan canlı Google araması yap
     if user_message and not image_base64:
-        google_res = search_google(user_message)
-        if google_res:
-            search_context = f"\n\n[Google Canlı Arama Sonuçları]:\n{google_res}\n\nLütfen bu canlı Google sonuçlarını göz önüne alarak soruya en güncel bilgiyi sağla."
+        live_google_data = search_google_live(user_message)
+        if live_google_data:
+            search_context = f"\n\n[CANLI GOOGLE ARAMA SONUÇLARI]:\n{live_google_data}\n\nLütfen bu canlı Google arama verilerini kullanarak soruya en güncel bilgiyi ver."
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT + search_context}]
     for m in recent_db_messages[:-1]:
         if m.content:
             messages.append({"role": m.role, "content": m.content})
 
-    # Görsel desteği ve Genel Model ayrımı
     if image_base64:
         model_name = "llama-3.2-11b-vision-preview"
         content_payload = [
-            {"type": "text", "text": user_message if user_message else "Bu görselde ne görüyorsun? Açıkla."},
+            {"type": "text", "text": user_message if user_message else "Görseli detaylıca incele ve açıkla."},
             {"type": "image_url", "image_url": {"url": image_base64}}
         ]
         messages.append({"role": "user", "content": content_payload})
