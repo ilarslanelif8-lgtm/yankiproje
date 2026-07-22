@@ -13,7 +13,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIR = os.path.join(BASE_DIR, 'templates')
 
 app = Flask(__name__, template_folder=TEMPLATE_DIR)
-app.config['SECRET_KEY'] = 'yanki-gizli-anahtar-12345'  # Güvenlik için gizli anahtar
+app.config['SECRET_KEY'] = 'yanki-gizli-anahtar-12345'
 app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{os.path.join(BASE_DIR, "database.db")}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -21,9 +21,10 @@ db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
-# Yapay Zeka Modeli
+# Yapay Zeka Modeli Yapılandırması
+# Hugging Face ücretsiz açık uç noktası doğrudan entegre edildi
 MODEL_ID = "Qwen/Qwen2.5-Coder-32B-Instruct"
-client = InferenceClient(MODEL_ID)
+client = InferenceClient(model=MODEL_ID)
 
 ASSISTANT_NAME = "Yankı"
 MODEL_NAME = "Qwen2.5-32B (Pro)"
@@ -153,16 +154,16 @@ def chat():
             )
 
             for chunk in response_stream:
-                if chunk.choices and len(chunk.choices) > 0:
-                    token = chunk.choices[0].delta.content
-                    if token:
-                        yield json.dumps({"delta": token}, ensure_ascii=False) + "\n"
+                if hasattr(chunk, "choices") and chunk.choices:
+                    delta_content = getattr(chunk.choices[0].delta, "content", None)
+                    if delta_content:
+                        yield json.dumps({"delta": delta_content}, ensure_ascii=False) + "\n"
 
             yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
 
         except Exception as e:
             logging.error(f"Yapay zeka hatası: {e}")
-            yield json.dumps({"error": "Yapay zeka yanıt üretirken bir hata oluştu."}, ensure_ascii=False) + "\n"
+            yield json.dumps({"error": f"Model bağlantı hatası: {str(e)}"}, ensure_ascii=False) + "\n"
 
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
 
