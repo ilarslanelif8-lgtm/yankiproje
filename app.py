@@ -1,11 +1,11 @@
 import os
 import json
 import logging
-import urllib.request
 from flask import Flask, request, jsonify, render_template, redirect, url_for, flash, Response, stream_with_context
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
+from huggingface_hub import InferenceClient
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -22,11 +22,14 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
 ASSISTANT_NAME = "Yankı"
-MODEL_NAME = "Qwen2.5-7B"
+MODEL_NAME = "Mistral-7B (Gerçek Yanıt)"
+
+# Stabil çalışan ve Türkçe anlayan ücretsiz model istemcisi
+client = InferenceClient(model="mistralai/Mistral-7B-Instruct-v0.2")
 
 SYSTEM_PROMPT = (
-    "Sen 'Yankı' adında son derece akıllı, hızlı, yardımsever ve sempatik bir yapay zeka asistansın. "
-    "Kullanıcının sorularına Türkçe, net, mantıklı ve seri yanıtlar ver."
+    "Sen 'Yankı' adında akıllı, yardımsever ve sempatik bir yapay zeka asistansın. "
+    "Kullanıcının sorusunu dikkatlice oku ve sadece o soruya özel Türkçe, net ve mantıklı yanıtlar ver."
 )
 
 class User(UserMixin, db.Model):
@@ -110,59 +113,42 @@ def chat():
     if not user_message and not image_data:
         return jsonify({"error": "Mesaj boş olamaz."}), 400
 
-    # Prompt formatlama
-    prompt_text = f"<|im_start|>system\n{SYSTEM_PROMPT}<|im_end|>\n"
-    for history_item in chat_history[-6:]:
+    # Mistral formatına uygun mesaj geçmişi
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    for history_item in chat_history[-4:]:
         role = history_item.get("role")
         content = history_item.get("content")
         if role in ["user", "assistant"] and content:
-            prompt_text += f"<|im_start|>{role}\n{content}<|im_end|>\n"
-    
+            messages.append({"role": role, "content": content})
+
     content_payload = user_message
     if image_data:
-        content_payload = f"[Görsel Yüklendi] {user_message if user_message else 'Görseli açıkla.'}"
-    prompt_text += f"<|im_start|>user\n{content_payload}<|im_end|>\n<|im_start|>assistant\n"
+        content_payload = f"[Görsel Yüklendi] {user_message if user_message else 'Bu görseli analiz et.'}"
+
+    messages.append({"role": "user", "content": content_payload})
 
     def generate():
         try:
-            # Doğrudan açık Hugging Face Native Endpoint
-            url = "https://api-inference.huggingface.co/models/Qwen/Qwen2.5-7B-Instruct"
-            payload = json.dumps({
-                "inputs": prompt_text,
-                "parameters": {
-                    "max_new_tokens": 512,
-                    "return_full_text": False,
-                    "temperature": 0.7
-                },
-                "options": {
-                    "use_cache": True,
-                    "wait_for_model": True
-                }
-            }).encode('utf-8')
-
-            req = urllib.request.Request(
-                url, 
-                data=payload, 
-                headers={
-                    "Content-Type": "application/json",
-                    "User-Agent": "Mozilla/5.0"
-                }
+            # Akışlı yanıt üretimi
+            response = client.chat_completion(
+                messages=messages,
+                max_tokens=512,
+                temperature=0.7,
+                stream=True
             )
 
-            with urllib.request.urlopen(req) as response:
-                result = json.loads(response.read().decode('utf-8'))
-                
-                if isinstance(result, list) and len(result) > 0:
-                    generated_text = result[0].get("generated_text", "")
-                    yield json.dumps({"delta": generated_text}, ensure_ascii=False) + "\n"
-                elif isinstance(result, dict) and "generated_text" in result:
-                    yield json.dumps({"delta": result["generated_text"]}, ensure_ascii=False) + "\n"
+            for chunk in response:
+                if hasattr(chunk, "choices") and chunk.choices:
+                    delta = getattr(chunk.choices[0].delta, "content", "")
+                    if delta:
+                        yield json.dumps({"delta": delta}, ensure_ascii=False) + "\n"
 
             yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
 
         except Exception as e:
             logging.error(f"Yapay zeka hatası: {e}")
-            yield json.dumps({"delta": "Merhaba! Ben Yankı, şu an bağlantıyı tazeledim. Sana nasıl yardımcı olabilirim?"}, ensure_ascii=False) + "\n"
+            yield json.dumps({"delta": "Üzgünüm, şu an sunucu yoğun. Lütfen sorunuzu tekrar sorun."}, ensure_ascii=False) + "\n"
             yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
 
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
