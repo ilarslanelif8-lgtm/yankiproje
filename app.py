@@ -22,11 +22,11 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
 ASSISTANT_NAME = "Yankı"
-MODEL_NAME = "Yankı-AI (Akıllı Zeka)"
+MODEL_NAME = "Yankı-AI (Groq Ultra Hızlı)"
 
 SYSTEM_PROMPT = (
-    "Sen 'Yankı' adında yardımsever, samimi ve son derece akıllı bir yapay zeka asistansın. "
-    "Kullanıcının yazdıklarını dikkatle oku ve sadece kullanıcının sorusuna özel, samimi, Türkçe yanıtlar ver."
+    "Sen 'Yankı' adında son derece akıllı, samimi, eğlenceli ve yardımsever bir yapay zeka asistansın. "
+    "Kullanıcının yazdıklarına Türkçe, mantıklı, detaylı ve içten yanıtlar ver."
 )
 
 class User(UserMixin, db.Model):
@@ -110,82 +110,65 @@ def chat():
     if not user_message and not image_data:
         return jsonify({"error": "Mesaj boş olamaz."}), 400
 
+    api_key = os.environ.get("GROQ_API_KEY", "")
+
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for history_item in chat_history[-6:]:
+        role = history_item.get("role")
+        content = history_item.get("content")
+        if role in ["user", "assistant"] and content:
+            messages.append({"role": role, "content": content})
+
+    messages.append({"role": "user", "content": user_message})
+
     def generate():
+        if not api_key:
+            yield json.dumps({"delta": "Lütfen Render ortamında GROQ_API_KEY tanımlayın."}, ensure_ascii=False) + "\n"
+            yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
+            return
+
         try:
-            # DuckDuckGo Chat V1 API üzerinden token alma
-            session = requests.Session()
-            session.headers.update({
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "x-vqd-accept": "1"
-            })
-            
-            token_res = session.get("https://duckduckgo.com/duckchat/v1/status", timeout=5)
-            vqd = token_res.headers.get("x-vqd-4")
-
-            if not vqd:
-                # İkinci alternatif hızlı endpoint
-                alt_res = requests.post(
-                    "https://text.pollinations.ai/",
-                    json={
-                        "messages": [
-                            {"role": "system", "content": SYSTEM_PROMPT},
-                            {"role": "user", "content": user_message}
-                        ],
-                        "model": "mistral"
-                    },
-                    timeout=10
-                )
-                answer = alt_res.text if alt_res.status_code == 200 else "Anladım! Başka bir konuda yardımcı olabilir miyim?"
-                yield json.dumps({"delta": answer}, ensure_ascii=False) + "\n"
-                yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
-                return
-
-            # Canlı Sohbet İsteği
-            chat_payload = {
-                "model": "gpt-4o-mini",
-                "messages": [
-                    {"role": "user", "content": f"{SYSTEM_PROMPT}\n\nKullanıcı: {user_message}"}
-                ]
-            }
-            
-            chat_headers = {
-                "x-vqd-4": vqd,
+            headers = {
+                "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json"
             }
+            payload = {
+                "model": "llama-3.3-70b-versatile",
+                "messages": messages,
+                "stream": True
+            }
 
-            response = session.post(
-                "https://duckduckgo.com/duckchat/v1/chat",
-                json=chat_payload,
-                headers=chat_headers,
+            response = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers=headers,
+                json=payload,
                 stream=True,
-                timeout=12
+                timeout=20
             )
 
-            full_reply = ""
-            for line in response.iter_lines():
-                if line:
-                    line_str = line.decode('utf-8')
-                    if line_str.startswith("data: "):
-                        data_json = line_str[6:]
-                        if data_json == "[DONE]":
-                            break
-                        try:
-                            parsed = json.loads(data_json)
-                            chunk = parsed.get("message", "")
-                            if chunk:
-                                full_reply += chunk
-                                yield json.dumps({"delta": chunk}, ensure_ascii=False) + "\n"
-                        except Exception:
-                            continue
-
-            if not full_reply:
-                yield json.dumps({"delta": "Seni çok iyi anlıyorum! Bana biraz daha detay verir misin?"}, ensure_ascii=False) + "\n"
+            if response.status_code == 200:
+                for line in response.iter_lines():
+                    if line:
+                        line_str = line.decode('utf-8')
+                        if line_str.startswith("data: "):
+                            data_str = line_str[6:].strip()
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                parsed = json.loads(data_str)
+                                chunk = parsed['choices'][0]['delta'].get('content', '')
+                                if chunk:
+                                    yield json.dumps({"delta": chunk}, ensure_ascii=False) + "\n"
+                            except Exception:
+                                continue
+            else:
+                yield json.dumps({"delta": "Şu an yanıt oluşturulamadı, lütfen tekrar deneyin."}, ensure_ascii=False) + "\n"
 
             yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
 
         except Exception as e:
             logging.error(f"Hata: {e}")
-            yield json.dumps({"delta": "Sana nasıl yardımcı olabileceğimi açıklayabilirim."}, ensure_ascii=False) + "\n"
+            yield json.dumps({"delta": "Bir hata oluştu, tekrar yazabilirsiniz."}, ensure_ascii=False) + "\n"
             yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
 
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
