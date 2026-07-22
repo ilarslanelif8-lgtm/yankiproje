@@ -86,7 +86,6 @@
         .assistant .bubble { background-color: #1e293b; border: 1px solid #334155; color: #f8fafc; }
         .user .bubble { background-color: #2563eb; color: white; }
 
-        /* AÇIK GRİ KOD KUTUSU (TEMİZ & OKUNABİLİR) */
         .bubble code, .bubble pre {
             background-color: #e2e8f0 !important;
             color: #0f172a !important;
@@ -181,24 +180,12 @@
             flex-shrink: 0;
         }
 
-        /* MOBİL VE TABLET UYUMU (RESPONSIVE) */
         @media (max-width: 768px) {
-            .sidebar {
-                display: none; /* Mobilde kenar çubuğunu gizler */
-            }
-            .message-row {
-                max-width: 92%;
-            }
-            .header-bar {
-                padding: 10px 15px;
-                font-size: 13px;
-            }
-            .chat-box {
-                padding: 15px 10px;
-            }
-            .input-area {
-                padding: 10px 12px;
-            }
+            .sidebar { display: none; }
+            .message-row { max-width: 92%; }
+            .header-bar { padding: 10px 15px; font-size: 13px; }
+            .chat-box { padding: 15px 10px; }
+            .input-area { padding: 10px 12px; }
         }
     </style>
 </head>
@@ -218,7 +205,7 @@
     <div class="main-chat">
         <div class="header-bar">
             <span class="badge bg-secondary p-2"><i class="fa-solid fa-bolt"></i> Hızlı Sunucu</span>
-            <span class="badge bg-primary p-2"><i class="fa-solid fa-diamond"></i> Yankı-AI</span>
+            <span class="badge bg-primary p-2"><i class="fa-solid fa-globe"></i> İnternet Erişimi Aktif</span>
             <span class="badge bg-success p-2"><i class="fa-solid fa-circle"></i> Sistem Aktif</span>
         </div>
 
@@ -256,11 +243,9 @@
         let selectedBase64Image = null;
         let femaleVoice = null;
 
-        // Tarayıcıdaki sesleri yükle ve doğal Kadın sesini bul
         function loadVoices() {
             if ('speechSynthesis' in window) {
                 const voices = window.speechSynthesis.getVoices();
-                // Türkçe sesler arasında kadın seslerini ara (Emel, Zira, Yalda, Filiz, Female vs.)
                 femaleVoice = voices.find(v => v.lang.includes('tr') && (v.name.toLowerCase().includes('female') || v.name.toLowerCase().includes('zira') || v.name.toLowerCase().includes('emel') || v.name.toLowerCase().includes('filiz') || v.name.toLowerCase().includes('yelda')))
                               || voices.find(v => v.lang.includes('tr')) 
                               || null;
@@ -286,14 +271,13 @@
         function speakText(text) {
             if (ttsEnabled && 'speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
-                // Kod bloklarını ve sembolleri sesli okumaması için temizle
                 let cleanText = text.replace(/```[\s\S]*?```/g, "kod bloğu.").replace(/`([^`]+)`/g, "$1");
                 const utterance = new SpeechSynthesisUtterance(cleanText);
                 utterance.lang = 'tr-TR';
                 if (femaleVoice) {
                     utterance.voice = femaleVoice;
                 }
-                utterance.pitch = 1.1; // Kadın sesi tonlaması
+                utterance.pitch = 1.1;
                 utterance.rate = 1.0;
                 window.speechSynthesis.speak(utterance);
             }
@@ -371,14 +355,14 @@
                 });
 
                 const reader = res.body.getReader();
-                const decoder = new TextDecoder();
+                const decoder = new TextDecoder('utf-8');
                 let fullText = '';
 
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
 
-                    const chunk = decoder.decode(value);
+                    const chunk = decoder.decode(value, { stream: true });
                     const lines = chunk.split('\n');
 
                     for (const line of lines) {
