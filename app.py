@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import requests
+from bs4 import BeautifulSoup
 from flask import Flask, request, jsonify, render_template, redirect, url_for, flash, Response, stream_with_context
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
@@ -22,12 +23,25 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
 ASSISTANT_NAME = "Yankı"
-MODEL_NAME = "Yankı-AI (Groq Ultra Hızlı)"
+MODEL_NAME = "Yankı-AI (Süper Hızlı)"
 
 SYSTEM_PROMPT = (
     "Sen 'Yankı' adında son derece akıllı, samimi, eğlenceli ve yardımsever bir yapay zeka asistansın. "
-    "Kullanıcının yazdıklarına Türkçe, mantıklı, detaylı ve içten yanıtlar ver."
+    "Sana internetten arama sonuçları veya güncel bilgiler sunulursa bunları kullanarak kullanıcıya Türkçe, akıcı ve net yanıtlar ver."
 )
+
+def search_web(query):
+    try:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        res = requests.get(f"https://html.duckduckgo.com/html/?q={query}", headers=headers, timeout=4)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, "html.parser")
+            snippets = [a.get_text().strip() for a in soup.find_all("a", class_="result__snippet")[:3]]
+            if snippets:
+                return "\n".join(snippets)
+    except Exception as e:
+        logging.error(f"Arama hatası: {e}")
+    return ""
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -104,13 +118,20 @@ def chat():
         return jsonify({"error": "Geçersiz veri biçimi."}), 400
 
     user_message = (data.get("message") or "").strip()
-    image_data = data.get("image")
     chat_history = data.get("history") or []
 
-    if not user_message and not image_data:
+    if not user_message:
         return jsonify({"error": "Mesaj boş olamaz."}), 400
 
     api_key = os.environ.get("GROQ_API_KEY", "")
+
+    # Güncel veri ihtiyacı tespit edildiğinde web araması yap
+    search_keywords = ["hava", "kaç derece", "bugün", "haber", "güncel", "kimdir", "kaç", "dolar", "euro", "saat"]
+    web_context = ""
+    if any(kw in user_message.lower() for kw in search_keywords):
+        snippets = search_web(user_message)
+        if snippets:
+            web_context = f"\n[Güncel Web Arama Bilgisi]: {snippets}"
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for history_item in chat_history[-6:]:
@@ -119,11 +140,12 @@ def chat():
         if role in ["user", "assistant"] and content:
             messages.append({"role": role, "content": content})
 
-    messages.append({"role": "user", "content": user_message})
+    final_user_content = user_message + web_context
+    messages.append({"role": "user", "content": final_user_content})
 
     def generate():
         if not api_key:
-            yield json.dumps({"delta": "Lütfen Render ortamında GROQ_API_KEY tanımlayın."}, ensure_ascii=False) + "\n"
+            yield json.dumps({"delta": "Sistem hazırlanıyor, lütfen birazdan tekrar deneyin."}, ensure_ascii=False) + "\n"
             yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
             return
 
