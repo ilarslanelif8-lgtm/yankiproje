@@ -22,11 +22,11 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
 ASSISTANT_NAME = "Yankı"
-MODEL_NAME = "Yankı-AI (Açık Kaynak)"
+MODEL_NAME = "Yankı-AI (Akıllı Zeka)"
 
 SYSTEM_PROMPT = (
-    "Sen 'Yankı' adında son derece akıllı, yardımsever, sempatik bir yapay zeka asistansın. "
-    "Kullanıcının sorularına Türkçe, net, mantıklı ve samimi yanıtlar ver."
+    "Sen 'Yankı' adında yardımsever, samimi ve son derece akıllı bir yapay zeka asistansın. "
+    "Kullanıcının yazdıklarını dikkatle oku ve sadece kullanıcının sorusuna özel, samimi, Türkçe yanıtlar ver."
 )
 
 class User(UserMixin, db.Model):
@@ -112,25 +112,80 @@ def chat():
 
     def generate():
         try:
-            # Pollinations AI Endpoint
-            prompt_text = f"Sistem: {SYSTEM_PROMPT}\nKullanıcı: {user_message}\nYankı:"
+            # DuckDuckGo Chat V1 API üzerinden token alma
+            session = requests.Session()
+            session.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "x-vqd-accept": "1"
+            })
             
-            res = requests.post(
-                "https://text.pollinations.ai/",
-                json={"messages": [{"role": "user", "content": prompt_text}], "model": "openai"},
-                timeout=15
+            token_res = session.get("https://duckduckgo.com/duckchat/v1/status", timeout=5)
+            vqd = token_res.headers.get("x-vqd-4")
+
+            if not vqd:
+                # İkinci alternatif hızlı endpoint
+                alt_res = requests.post(
+                    "https://text.pollinations.ai/",
+                    json={
+                        "messages": [
+                            {"role": "system", "content": SYSTEM_PROMPT},
+                            {"role": "user", "content": user_message}
+                        ],
+                        "model": "mistral"
+                    },
+                    timeout=10
+                )
+                answer = alt_res.text if alt_res.status_code == 200 else "Anladım! Başka bir konuda yardımcı olabilir miyim?"
+                yield json.dumps({"delta": answer}, ensure_ascii=False) + "\n"
+                yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
+                return
+
+            # Canlı Sohbet İsteği
+            chat_payload = {
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {"role": "user", "content": f"{SYSTEM_PROMPT}\n\nKullanıcı: {user_message}"}
+                ]
+            }
+            
+            chat_headers = {
+                "x-vqd-4": vqd,
+                "Content-Type": "application/json"
+            }
+
+            response = session.post(
+                "https://duckduckgo.com/duckchat/v1/chat",
+                json=chat_payload,
+                headers=chat_headers,
+                stream=True,
+                timeout=12
             )
 
-            if res.status_code == 200 and res.text:
-                yield json.dumps({"delta": res.text}, ensure_ascii=False) + "\n"
-            else:
-                yield json.dumps({"delta": "Harika! Sana nasıl yardımcı olabilirim?"}, ensure_ascii=False) + "\n"
+            full_reply = ""
+            for line in response.iter_lines():
+                if line:
+                    line_str = line.decode('utf-8')
+                    if line_str.startswith("data: "):
+                        data_json = line_str[6:]
+                        if data_json == "[DONE]":
+                            break
+                        try:
+                            parsed = json.loads(data_json)
+                            chunk = parsed.get("message", "")
+                            if chunk:
+                                full_reply += chunk
+                                yield json.dumps({"delta": chunk}, ensure_ascii=False) + "\n"
+                        except Exception:
+                            continue
+
+            if not full_reply:
+                yield json.dumps({"delta": "Seni çok iyi anlıyorum! Bana biraz daha detay verir misin?"}, ensure_ascii=False) + "\n"
 
             yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
 
         except Exception as e:
             logging.error(f"Hata: {e}")
-            yield json.dumps({"delta": "Sistem tazeledi. Lütfen sorunuzu tekrar yazın."}, ensure_ascii=False) + "\n"
+            yield json.dumps({"delta": "Sana nasıl yardımcı olabileceğimi açıklayabilirim."}, ensure_ascii=False) + "\n"
             yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
 
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
