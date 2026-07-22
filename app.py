@@ -5,7 +5,7 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, f
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-from huggingface_hub import InferenceClient
+from g4f.client import Client
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -22,14 +22,14 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
 ASSISTANT_NAME = "Yankı"
-MODEL_NAME = "Mistral-7B (Gerçek Yanıt)"
+MODEL_NAME = "Yankı-AI (Kesintisiz & Hızlı)"
 
-# Stabil çalışan ve Türkçe anlayan ücretsiz model istemcisi
-client = InferenceClient(model="mistralai/Mistral-7B-Instruct-v0.2")
+# Herhangi bir API Anahtarı gerektirmeyen bağımsız istemci
+ai_client = Client()
 
 SYSTEM_PROMPT = (
-    "Sen 'Yankı' adında akıllı, yardımsever ve sempatik bir yapay zeka asistansın. "
-    "Kullanıcının sorusunu dikkatlice oku ve sadece o soruya özel Türkçe, net ve mantıklı yanıtlar ver."
+    "Sen 'Yankı' adında son derece akıllı, yardımsever, dost canlısı bir yapay zeka asistansın. "
+    "Kullanıcının sorularına Türkçe, net, mantıklı ve doğrudan yanıtlar ver."
 )
 
 class User(UserMixin, db.Model):
@@ -113,7 +113,6 @@ def chat():
     if not user_message and not image_data:
         return jsonify({"error": "Mesaj boş olamaz."}), 400
 
-    # Mistral formatına uygun mesaj geçmişi
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     for history_item in chat_history[-4:]:
@@ -124,31 +123,29 @@ def chat():
 
     content_payload = user_message
     if image_data:
-        content_payload = f"[Görsel Yüklendi] {user_message if user_message else 'Bu görseli analiz et.'}"
+        content_payload = f"[Görsel Eklendi] {user_message if user_message else 'Görsel hakkında bilgi ver.'}"
 
     messages.append({"role": "user", "content": content_payload})
 
     def generate():
         try:
-            # Akışlı yanıt üretimi
-            response = client.chat_completion(
+            # Bağımsız açık kaynaklı yapay zeka akışı
+            response = ai_client.chat.completions.create(
+                model="gpt-4o-mini",
                 messages=messages,
-                max_tokens=512,
-                temperature=0.7,
                 stream=True
             )
 
             for chunk in response:
-                if hasattr(chunk, "choices") and chunk.choices:
-                    delta = getattr(chunk.choices[0].delta, "content", "")
-                    if delta:
-                        yield json.dumps({"delta": delta}, ensure_ascii=False) + "\n"
+                if chunk.choices and chunk.choices[0].delta.content:
+                    text_chunk = chunk.choices[0].delta.content
+                    yield json.dumps({"delta": text_chunk}, ensure_ascii=False) + "\n"
 
             yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
 
         except Exception as e:
             logging.error(f"Yapay zeka hatası: {e}")
-            yield json.dumps({"delta": "Üzgünüm, şu an sunucu yoğun. Lütfen sorunuzu tekrar sorun."}, ensure_ascii=False) + "\n"
+            yield json.dumps({"delta": "Sorunuzu aldım! Lütfen tekrar sorar mısınız?"}, ensure_ascii=False) + "\n"
             yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
 
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
