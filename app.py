@@ -2,13 +2,12 @@ import os
 import json
 import logging
 import requests
-from bs4 import BeautifulSoup
 from flask import Flask, request, jsonify, render_template, redirect, url_for, flash, Response, stream_with_context
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.INFO)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIR = os.path.join(BASE_DIR, 'templates')
@@ -26,22 +25,9 @@ ASSISTANT_NAME = "Yankı"
 MODEL_NAME = "Yankı-AI (Süper Hızlı)"
 
 SYSTEM_PROMPT = (
-    "Sen 'Yankı' adında son derece akıllı, samimi, eğlenceli ve yardımsever bir yapay zeka asistansın. "
-    "Sana internetten arama sonuçları veya güncel bilgiler sunulursa bunları kullanarak kullanıcıya Türkçe, akıcı ve net yanıtlar ver."
+    "Sen 'Yankı' adında akıllı, samimi ve yardımsever bir yapay zeka asistansın. "
+    "Kullanıcıya Türkçe, net ve kibar yanıtlar ver."
 )
-
-def search_web(query):
-    try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-        res = requests.get(f"https://html.duckduckgo.com/html/?q={query}", headers=headers, timeout=4)
-        if res.status_code == 200:
-            soup = BeautifulSoup(res.text, "html.parser")
-            snippets = [a.get_text().strip() for a in soup.find_all("a", class_="result__snippet")[:3]]
-            if snippets:
-                return "\n".join(snippets)
-    except Exception as e:
-        logging.error(f"Arama hatası: {e}")
-    return ""
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -109,13 +95,12 @@ def logout():
     return redirect(url_for('login'))
 
 @app.route("/chat", methods=["POST"])
-@app.route("/api/chat", methods=["POST"])
 @login_required
 def chat():
     try:
         data = request.get_json(force=True) or {}
     except Exception:
-        return jsonify({"error": "Geçersiz veri biçimi."}), 400
+        return jsonify({"error": "Geçersiz veri."}), 400
 
     user_message = (data.get("message") or "").strip()
     chat_history = data.get("history") or []
@@ -125,28 +110,17 @@ def chat():
 
     api_key = os.environ.get("GROQ_API_KEY", "")
 
-    # Güncel veri ihtiyacı tespit edildiğinde web araması yap
-    search_keywords = ["hava", "kaç derece", "bugün", "haber", "güncel", "kimdir", "kaç", "dolar", "euro", "saat"]
-    web_context = ""
-    if any(kw in user_message.lower() for kw in search_keywords):
-        snippets = search_web(user_message)
-        if snippets:
-            web_context = f"\n[Güncel Web Arama Bilgisi]: {snippets}"
-
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for history_item in chat_history[-6:]:
-        role = history_item.get("role")
-        content = history_item.get("content")
-        if role in ["user", "assistant"] and content:
-            messages.append({"role": role, "content": content})
+    for h in chat_history[-6:]:
+        if h.get("role") in ["user", "assistant"] and h.get("content"):
+            messages.append({"role": h["role"], "content": h["content"]})
 
-    final_user_content = user_message + web_context
-    messages.append({"role": "user", "content": final_user_content})
+    messages.append({"role": "user", "content": user_message})
 
     def generate():
         if not api_key:
-            yield json.dumps({"delta": "Sistem hazırlanıyor, lütfen birazdan tekrar deneyin."}, ensure_ascii=False) + "\n"
-            yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
+            yield json.dumps({"delta": "Sistem API anahtarı eksik."}, ensure_ascii=False) + "\n"
+            yield json.dumps({"done": True}) + "\n"
             return
 
         try:
@@ -160,16 +134,10 @@ def chat():
                 "stream": True
             }
 
-            response = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers=headers,
-                json=payload,
-                stream=True,
-                timeout=20
-            )
+            res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, stream=True, timeout=20)
 
-            if response.status_code == 200:
-                for line in response.iter_lines():
+            if res.status_code == 200:
+                for line in res.iter_lines():
                     if line:
                         line_str = line.decode('utf-8')
                         if line_str.startswith("data: "):
@@ -184,17 +152,15 @@ def chat():
                             except Exception:
                                 continue
             else:
-                yield json.dumps({"delta": "Şu an yanıt oluşturulamadı, lütfen tekrar deneyin."}, ensure_ascii=False) + "\n"
+                yield json.dumps({"delta": "Şu an yanıt alınamıyor, lütfen tekrar deneyin."}, ensure_ascii=False) + "\n"
 
-            yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
+            yield json.dumps({"done": True}) + "\n"
 
         except Exception as e:
-            logging.error(f"Hata: {e}")
-            yield json.dumps({"delta": "Bir hata oluştu, tekrar yazabilirsiniz."}, ensure_ascii=False) + "\n"
-            yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
+            yield json.dumps({"delta": f"Hata oluştu: {str(e)}"}, ensure_ascii=False) + "\n"
+            yield json.dumps({"done": True}) + "\n"
 
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
-
