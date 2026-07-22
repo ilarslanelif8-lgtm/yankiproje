@@ -9,15 +9,12 @@
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         body { background-color: #0f1117; color: #e1e7ed; display: flex; height: 100vh; overflow: hidden; }
         
-        /* Sol Menü */
         .sidebar { width: 260px; background-color: #161922; border-right: 1px solid #232733; display: flex; flex-direction: column; padding: 20px; }
-        .brand { font-size: 22px; font-weight: bold; color: #fff; margin-bottom: 25px; display: flex; align-items: center; gap: 10px; }
-        .new-chat-btn { background-color: #232733; color: #fff; border: 1px solid #323849; padding: 12px; border-radius: 8px; cursor: pointer; text-align: left; font-weight: 600; margin-bottom: 20px; transition: 0.2s; }
-        .new-chat-btn:hover { background-color: #2d3242; }
-        .user-info { margin-top: auto; padding-top: 15px; border-top: 1px solid #232733; font-size: 13px; color: #8b949e; display: flex; justify-content: space-between; align-items: center; }
+        .brand { font-size: 22px; font-weight: bold; color: #fff; margin-bottom: 25px; }
+        .new-chat-btn { background-color: #232733; color: #fff; border: 1px solid #323849; padding: 12px; border-radius: 8px; cursor: pointer; text-align: left; font-weight: 600; margin-bottom: 20px; }
+        .user-info { margin-top: auto; padding-top: 15px; border-top: 1px solid #232733; font-size: 13px; color: #8b949e; display: flex; justify-content: space-between; }
         .logout-link { color: #ff5555; text-decoration: none; font-weight: bold; }
 
-        /* Ana Sohbet Alanı */
         .chat-container { flex: 1; display: flex; flex-direction: column; height: 100vh; }
         .header { height: 60px; border-bottom: 1px solid #232733; display: flex; align-items: center; padding: 0 25px; gap: 10px; font-size: 13px; }
         .badge { background: #232733; padding: 5px 12px; border-radius: 20px; color: #a3b8cc; }
@@ -26,16 +23,20 @@
         .chat-messages { flex: 1; padding: 25px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
         .message { display: flex; gap: 15px; max-width: 80%; }
         .message.user { align-self: flex-end; flex-direction: row-reverse; }
-        .avatar { width: 36px; height: 36px; border-radius: 50%; background: #6366f1; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; flex-shrink: 0; }
+        .avatar { width: 36px; height: 36px; border-radius: 50%; background: #6366f1; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0; }
         .message.user .avatar { background: #22c55e; }
         .bubble { background-color: #1a1e29; padding: 14px 18px; border-radius: 12px; font-size: 15px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
         .message.user .bubble { background-color: #2563eb; color: #fff; }
+        .img-preview { max-width: 200px; border-radius: 8px; margin-top: 8px; display: block; }
 
-        /* Mesaj Giriş Kutusu */
         .input-container { padding: 20px; border-top: 1px solid #232733; background-color: #0f1117; }
-        .input-box { display: flex; background: #161922; border: 1px solid #323849; border-radius: 12px; padding: 8px 12px; align-items: center; gap: 10px; }
+        .image-preview-bar { display: none; margin-bottom: 10px; align-items: center; gap: 10px; background: #161922; padding: 8px; border-radius: 8px; }
+        .image-preview-bar img { height: 40px; border-radius: 4px; }
+        .input-box { display: flex; background: #161922; border: 1px solid #323849; border-radius: 12px; padding: 8px 12px; align-items: center; gap: 8px; }
         .input-box input { flex: 1; background: transparent; border: none; color: #fff; font-size: 15px; outline: none; padding: 8px; }
-        .send-btn { background: #6366f1; color: #fff; border: none; width: 40px; height: 40px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 18px; transition: 0.2s; }
+        .icon-btn { background: #232733; color: #fff; border: none; width: 38px; height: 38px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+        .icon-btn:hover { background: #323849; }
+        .send-btn { background: #6366f1; color: #fff; border: none; width: 40px; height: 40px; border-radius: 8px; cursor: pointer; font-size: 18px; }
         .send-btn:hover { background: #4f46e5; }
     </style>
 </head>
@@ -52,7 +53,7 @@
 
     <div class="chat-container">
         <div class="header">
-            <span class="badge">⚡ 7/24 BULUT SUNUCUSU</span>
+            <span class="badge">⚡ Hızlı Sunucu</span>
             <span class="badge">🔹 {{ model_name }}</span>
             <span class="badge badge-active">● Sistem Aktif</span>
         </div>
@@ -60,15 +61,24 @@
         <div class="chat-messages" id="chatMessages">
             <div class="message assistant">
                 <div class="avatar">Y</div>
-                <div class="bubble">Merhaba! Ben {{ assistant_name }}. Sana nasıl yardımcı olabilirim?</div>
+                <div class="bubble">Merhaba! Ben {{ assistant_name }}. Sesli konuşabilir, görsel gönderebilir veya mesaj yazabilirsin!</div>
             </div>
         </div>
 
         <div class="input-container">
+            <div class="image-preview-bar" id="previewBar">
+                <img id="previewImg" src="" alt="Önizleme">
+                <span style="font-size: 12px; color: #a3b8cc;">Görsel Eklendi</span>
+                <button type="button" class="icon-btn" style="margin-left:auto; height:25px; width:25px;" onclick="clearImage()">✕</button>
+            </div>
+
             <form id="chatForm" onsubmit="sendMessage(event)">
                 <div class="input-box">
-                    <input type="text" id="userInput" placeholder="Bir şeyler yazın..." autocomplete="off">
-                    <button type="submit" class="send-btn" id="sendBtn">➔</button>
+                    <input type="file" id="fileInput" accept="image/*" style="display:none;" onchange="handleImageSelect(event)">
+                    <button type="button" class="icon-btn" title="Görsel Yükle" onclick="document.getElementById('fileInput').click()">🖼️</button>
+                    <button type="button" class="icon-btn" id="micBtn" title="Sesle Konuş" onclick="toggleSpeech()">🎤</button>
+                    <input type="text" id="userInput" placeholder="Bir şeyler yazın veya konuşun..." autocomplete="off">
+                    <button type="submit" class="send-btn">➔</button>
                 </div>
             </form>
         </div>
@@ -77,31 +87,84 @@
     <script>
         const chatMessages = document.getElementById('chatMessages');
         const userInput = document.getElementById('userInput');
-        const sendBtn = document.getElementById('sendBtn');
+        const previewBar = document.getElementById('previewBar');
+        const previewImg = document.getElementById('previewImg');
+        let selectedBase64Image = null;
         let history = [];
+
+        function handleImageSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    selectedBase64Image = e.target.result;
+                    previewImg.src = selectedBase64Image;
+                    previewBar.style.display = 'flex';
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function clearImage() {
+            selectedBase64Image = null;
+            document.getElementById('fileInput').value = '';
+            previewBar.style.display = 'none';
+        }
+
+        function toggleSpeech() {
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                alert("Tarayıcınız ses tanıma özelliğini desteklemiyor.");
+                return;
+            }
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const recognition = new SpeechRecognition();
+            recognition.lang = 'tr-TR';
+            recognition.start();
+
+            document.getElementById('micBtn').style.background = '#ef4444';
+
+            recognition.onresult = function(event) {
+                userInput.value = event.results[0][0].transcript;
+                document.getElementById('micBtn').style.background = '#232733';
+            };
+
+            recognition.onerror = recognition.onend = function() {
+                document.getElementById('micBtn').style.background = '#232733';
+            };
+        }
+
+        function speakText(text) {
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.lang = 'tr-TR';
+                window.speechSynthesis.speak(utterance);
+            }
+        }
 
         async function sendMessage(event) {
             if (event) event.preventDefault();
             
             const message = userInput.value.trim();
-            if (!message) return;
+            if (!message && !selectedBase64Image) return;
 
-            // Kullanıcı mesajını ekrana yaz
-            appendMessage('user', 'S', message);
-            userInput.value = '';
+            const currentImg = selectedBase64Image;
+            appendMessage('user', 'S', message, currentImg);
             
-            // Asistan için boş mesaj balonu oluştur
-            const botBubble = appendMessage('assistant', 'Y', 'Yanıt yazılıyor...');
+            userInput.value = '';
+            clearImage();
+            
+            const botBubble = appendMessage('assistant', 'Y', 'Yazılıyor...');
 
             try {
                 const response = await fetch('/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: message, history: history })
+                    body: JSON.stringify({ message: message, image: currentImg, history: history })
                 });
 
                 if (!response.ok) {
-                    botBubble.innerText = "Bir hata oluştu. Lütfen tekrar deneyin.";
+                    botBubble.innerText = "Hata oluştu, tekrar deneyin.";
                     return;
                 }
 
@@ -134,12 +197,14 @@
                 history.push({ role: 'user', content: message });
                 history.push({ role: 'assistant', content: fullResponse });
 
+                speakText(fullResponse);
+
             } catch (err) {
                 botBubble.innerText = "Bağlantı hatası oluştu.";
             }
         }
 
-        function appendMessage(role, avatarText, text) {
+        function appendMessage(role, avatarText, text, imgData = null) {
             const msgDiv = document.createElement('div');
             msgDiv.className = `message ${role}`;
             
@@ -150,6 +215,13 @@
             const bubble = document.createElement('div');
             bubble.className = 'bubble';
             bubble.innerText = text;
+
+            if (imgData) {
+                const img = document.createElement('img');
+                img.src = imgData;
+                img.className = 'img-preview';
+                bubble.appendChild(img);
+            }
 
             msgDiv.appendChild(avatar);
             msgDiv.appendChild(bubble);
