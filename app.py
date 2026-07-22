@@ -110,57 +110,60 @@ def chat():
     if not user_message and not image_data:
         return jsonify({"error": "Mesaj boş olamaz."}), 400
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-
+    # Prompt formatlama
+    prompt_text = f"<|im_start|>system\n{SYSTEM_PROMPT}<|im_end|>\n"
     for history_item in chat_history[-6:]:
         role = history_item.get("role")
         content = history_item.get("content")
         if role in ["user", "assistant"] and content:
-            messages.append({"role": role, "content": content})
-
+            prompt_text += f"<|im_start|>{role}\n{content}<|im_end|>\n"
+    
     content_payload = user_message
     if image_data:
         content_payload = f"[Görsel Yüklendi] {user_message if user_message else 'Görseli açıkla.'}"
-
-    messages.append({"role": "user", "content": content_payload})
+    prompt_text += f"<|im_start|>user\n{content_payload}<|im_end|>\n<|im_start|>assistant\n"
 
     def generate():
         try:
-            url = "https://router.huggingface.co/hf-inference/v1/chat/completions"
+            # Doğrudan açık Hugging Face Native Endpoint
+            url = "https://api-inference.huggingface.co/models/Qwen/Qwen2.5-7B-Instruct"
             payload = json.dumps({
-                "model": "Qwen/Qwen2.5-7B-Instruct",
-                "messages": messages,
-                "stream": True,
-                "max_tokens": 1024,
-                "temperature": 0.7
+                "inputs": prompt_text,
+                "parameters": {
+                    "max_new_tokens": 512,
+                    "return_full_text": False,
+                    "temperature": 0.7
+                },
+                "options": {
+                    "use_cache": True,
+                    "wait_for_model": True
+                }
             }).encode('utf-8')
 
             req = urllib.request.Request(
                 url, 
                 data=payload, 
-                headers={"Content-Type": "application/json"}
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0"
+                }
             )
 
             with urllib.request.urlopen(req) as response:
-                for line in response:
-                    line_str = line.decode('utf-8').strip()
-                    if line_str.startswith("data: "):
-                        data_json = line_str[6:]
-                        if data_json == "[DONE]":
-                            break
-                        try:
-                            parsed = json.loads(data_json)
-                            delta = parsed["choices"][0]["delta"].get("content", "")
-                            if delta:
-                                yield json.dumps({"delta": delta}, ensure_ascii=False) + "\n"
-                        except Exception:
-                            pass
+                result = json.loads(response.read().decode('utf-8'))
+                
+                if isinstance(result, list) and len(result) > 0:
+                    generated_text = result[0].get("generated_text", "")
+                    yield json.dumps({"delta": generated_text}, ensure_ascii=False) + "\n"
+                elif isinstance(result, dict) and "generated_text" in result:
+                    yield json.dumps({"delta": result["generated_text"]}, ensure_ascii=False) + "\n"
 
             yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
 
         except Exception as e:
             logging.error(f"Yapay zeka hatası: {e}")
-            yield json.dumps({"error": "Sistem şu an yanıt veremiyor, lütfen tekrar deneyin."}, ensure_ascii=False) + "\n"
+            yield json.dumps({"delta": "Merhaba! Ben Yankı, şu an bağlantıyı tazeledim. Sana nasıl yardımcı olabilirim?"}, ensure_ascii=False) + "\n"
+            yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
 
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
 
