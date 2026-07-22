@@ -26,7 +26,7 @@ MODEL_NAME = "Yankı-AI (Süper Hızlı)"
 
 SYSTEM_PROMPT = (
     "Sen 'Yankı' adında akıllı, samimi ve yardımsever bir yapay zeka asistansın. "
-    "Kullanıcıya Türkçe, net ve kibar yanıtlar ver."
+    "Kullanıcı bir fotoğraf yüklerse fotoğraftaki detayları dikkatle incele ve sorusuna Türkçe, net yanıtlar ver."
 )
 
 class User(UserMixin, db.Model):
@@ -103,10 +103,11 @@ def chat():
         return jsonify({"error": "Geçersiz veri."}), 400
 
     user_message = (data.get("message") or "").strip()
+    image_base64 = data.get("image")
     chat_history = data.get("history") or []
 
-    if not user_message:
-        return jsonify({"error": "Mesaj boş olamaz."}), 400
+    if not user_message and not image_base64:
+        return jsonify({"error": "Mesaj veya görsel boş olamaz."}), 400
 
     api_key = os.environ.get("GROQ_API_KEY", "")
 
@@ -115,7 +116,16 @@ def chat():
         if h.get("role") in ["user", "assistant"] and h.get("content"):
             messages.append({"role": h["role"], "content": h["content"]})
 
-    messages.append({"role": "user", "content": user_message})
+    model_name = "llama-3.2-11b-vision-preview" if image_base64 else "llama-3.3-70b-versatile"
+
+    if image_base64:
+        content_payload = [
+            {"type": "text", "text": user_message if user_message else "Bu görselde ne var?"},
+            {"type": "image_url", "image_url": {"url": image_base64}}
+        ]
+        messages.append({"role": "user", "content": content_payload})
+    else:
+        messages.append({"role": "user", "content": user_message})
 
     def generate():
         if not api_key:
@@ -129,12 +139,12 @@ def chat():
                 "Content-Type": "application/json"
             }
             payload = {
-                "model": "llama-3.3-70b-versatile",
+                "model": model_name,
                 "messages": messages,
                 "stream": True
             }
 
-            res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, stream=True, timeout=20)
+            res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, stream=True, timeout=25)
 
             if res.status_code == 200:
                 for line in res.iter_lines():
@@ -152,7 +162,7 @@ def chat():
                             except Exception:
                                 continue
             else:
-                yield json.dumps({"delta": "Şu an yanıt alınamıyor, lütfen tekrar deneyin."}, ensure_ascii=False) + "\n"
+                yield json.dumps({"delta": "Görsel işlenirken bir hata oluştu veya yanıt alınamadı."}, ensure_ascii=False) + "\n"
 
             yield json.dumps({"done": True}) + "\n"
 
