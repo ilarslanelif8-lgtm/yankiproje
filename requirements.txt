@@ -3,4 +3,5 @@ Flask-SQLAlchemy==3.1.1
 Flask-Login==0.6.3
 gunicorn
 requests
-duckduckgo-search
+googlesearch-python
+beautifulsoup4
