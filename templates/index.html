@@ -6,7 +6,6 @@
     <title>Yankı — Akıllı Asistan</title>
     
     <link rel="icon" href="https://img.icons8.com/?size=100&id=t7O2zTh8uMvA&format=png" type="image/png">
-    
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -224,14 +223,14 @@
     <div class="main-chat">
         <div class="header-bar">
             <span class="badge bg-secondary p-2"><i class="fa-solid fa-bolt"></i> Hızlı Sunucu</span>
-            <span class="badge bg-primary p-2"><i class="fa-solid fa-globe"></i> İnternet & Görsel Desteği</span>
-            <span class="badge bg-success p-2"><i class="fa-solid fa-database"></i> Geçmiş Kaydediliyor</span>
+            <span class="badge bg-primary p-2"><i class="fa-brands fa-google"></i> Google Canlı Arama</span>
+            <span class="badge bg-success p-2"><i class="fa-solid fa-eye"></i> Görsel Analizi Aktif</span>
         </div>
 
         <div class="chat-box" id="chatBox">
             <div class="message-row assistant">
                 <div class="avatar assistant">Y</div>
-                <div class="bubble">Merhaba! Ben Yankı. Nasıl yardımcı olabilirim? Bugün ne yapmak istersin? 😊</div>
+                <div class="bubble">Merhaba! Ben Yankı. Sorularını sorabilir, canlı internet bilgisini alabilir veya bana fotoğraf gönderebilirsin! 😊</div>
             </div>
 
             {% for msg in history %}
@@ -278,7 +277,6 @@
         let selectedBase64Image = null;
         let femaleVoice = null;
 
-        // Sayfa açıldığında en aşağı kaydır
         const chatBox = document.getElementById('chatBox');
         chatBox.scrollTop = chatBox.scrollHeight;
 
@@ -332,11 +330,39 @@
             const file = e.target.files[0];
             if (!file) return;
 
+            // Görsel boyutunu optimize ederek hızlı yükleme yapıyoruz
+            const img = document.createElement('img');
             const reader = new FileReader();
+
             reader.onload = function(evt) {
-                selectedBase64Image = evt.target.result;
-                document.getElementById('imgPreview').src = selectedBase64Image;
-                document.getElementById('imgPreviewBox').style.display = 'block';
+                img.src = evt.target.result;
+                img.onload = function() {
+                    const canvas = document.createElement('canvas');
+                    let width = img.width;
+                    let height = img.height;
+                    const max_size = 800;
+
+                    if (width > height) {
+                        if (width > max_size) {
+                            height *= max_size / width;
+                            width = max_size;
+                        }
+                    } else {
+                        if (height > max_size) {
+                            width *= max_size / height;
+                            height = max_size;
+                        }
+                    }
+
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    selectedBase64Image = canvas.toDataURL('image/jpeg', 0.8);
+                    document.getElementById('imgPreview').src = selectedBase64Image;
+                    document.getElementById('imgPreviewBox').style.display = 'block';
+                };
             };
             reader.readAsDataURL(file);
         }
