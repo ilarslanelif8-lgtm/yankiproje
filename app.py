@@ -6,6 +6,7 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, f
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
+from duckduckgo_search import DDGS
 
 logging.basicConfig(level=logging.INFO)
 
@@ -27,7 +28,7 @@ MODEL_NAME = "Yankı-AI"
 SYSTEM_PROMPT = (
     "Sen 'Yankı' adında akıllı, samimi ve yardımsever bir yapay zeka asistansın. "
     "Kullanıcıya Türkçe, düzgün, imla kurallarına uygun, nazik ve net yanıtlar ver. "
-    "Gereksiz yere 'fotoğraf yükle' gibi ifadeler kullanma, doğal bir sohbet arkadaşı ve yardımcı gibi davran."
+    "Sana sunulan internet arama sonuçlarını kullanarak güncel bilgileri (döviz, altın, hava durumu, haberler) doğru şekilde sun."
 )
 
 class User(UserMixin, db.Model):
@@ -47,6 +48,18 @@ def load_user(user_id):
 
 with app.app_context():
     db.create_all()
+
+def search_internet(query):
+    """İnternette arama yapıp canlı bilgileri çeker"""
+    try:
+        results = []
+        with DDGS() as ddgs:
+            for r in ddgs.text(query, region='tr-tr', max_results=3):
+                results.append(f"Başlık: {r.get('title')}\nÖzet: {r.get('body')}")
+        return "\n\n".join(results)
+    except Exception as e:
+        logging.error(f"Arama hatası: {e}")
+        return ""
 
 @app.route("/")
 @login_required
@@ -112,7 +125,15 @@ def chat():
 
     api_key = os.environ.get("GROQ_API_KEY", "")
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    # İnternet Araması Tetikleme (Hava durumu, altın, dolar, bugün, haber vb. kelimelerde)
+    search_keywords = ["altın", "dolar", "euro", "hava", "kaç derece", "bugün", "haber", "fiyat", "kimdir", "ne zaman"]
+    search_context = ""
+    if user_message and any(kw in user_message.lower() for kw in search_keywords) and not image_base64:
+        search_data = search_internet(user_message)
+        if search_data:
+            search_context = f"\n\n[İnternet Canlı Bilgileri]:\n{search_data}\n\nBu canlı bilgileri kullanarak kullanıcıya doğru yanıt ver."
+
+    messages = [{"role": "system", "content": SYSTEM_PROMPT + search_context}]
     for h in chat_history[-6:]:
         if h.get("role") in ["user", "assistant"] and h.get("content"):
             messages.append({"role": h["role"], "content": h["content"]})
@@ -171,7 +192,7 @@ def chat():
             yield json.dumps({"delta": f"Hata oluştu: {str(e)}"}, ensure_ascii=False) + "\n"
             yield json.dumps({"done": True}) + "\n"
 
-    return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
+    return Response(stream_with_context(generate()), mimetype="application/x-ndjson; charset=utf-8")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
