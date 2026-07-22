@@ -7,11 +7,11 @@
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        body { background-color: #0f1117; color: #e1e7ed; display: flex; height: 100vh; overflow: hidden; }
+        body { background-color: #0f1117; color: #ffffff; display: flex; height: 100vh; overflow: hidden; }
         
         .sidebar { width: 260px; background-color: #161922; border-right: 1px solid #232733; display: flex; flex-direction: column; padding: 20px; }
-        .brand { font-size: 22px; font-weight: bold; color: #fff; margin-bottom: 25px; }
-        .new-chat-btn { background-color: #232733; color: #fff; border: 1px solid #323849; padding: 12px; border-radius: 8px; cursor: pointer; text-align: left; font-weight: 600; margin-bottom: 20px; }
+        .brand { font-size: 22px; font-weight: bold; color: #ffffff; margin-bottom: 25px; }
+        .new-chat-btn { background-color: #232733; color: #ffffff; border: 1px solid #323849; padding: 12px; border-radius: 8px; cursor: pointer; text-align: left; font-weight: 600; margin-bottom: 20px; }
         .user-info { margin-top: auto; padding-top: 15px; border-top: 1px solid #232733; font-size: 13px; color: #8b949e; display: flex; justify-content: space-between; }
         .logout-link { color: #ff5555; text-decoration: none; font-weight: bold; }
 
@@ -23,20 +23,24 @@
         .chat-messages { flex: 1; padding: 25px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
         .message { display: flex; gap: 15px; max-width: 80%; }
         .message.user { align-self: flex-end; flex-direction: row-reverse; }
-        .avatar { width: 36px; height: 36px; border-radius: 50%; background: #6366f1; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0; }
+        .avatar { width: 36px; height: 36px; border-radius: 50%; background: #6366f1; display: flex; align-items: center; justify-content: center; font-weight: bold; color: #ffffff; flex-shrink: 0; }
         .message.user .avatar { background: #22c55e; }
-        .bubble { background-color: #1a1e29; padding: 14px 18px; border-radius: 12px; font-size: 15px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
-        .message.user .bubble { background-color: #2563eb; color: #fff; }
+        
+        /* Balon İçindeki Yazı Renkleri Sabitlendi */
+        .bubble { background-color: #1a1e29; color: #ffffff !important; padding: 14px 18px; border-radius: 12px; font-size: 15px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+        .message.user .bubble { background-color: #2563eb; color: #ffffff !important; }
         .img-preview { max-width: 200px; border-radius: 8px; margin-top: 8px; display: block; }
+
+        .thinking-text { font-style: italic; color: #94a3b8; }
 
         .input-container { padding: 20px; border-top: 1px solid #232733; background-color: #0f1117; }
         .image-preview-bar { display: none; margin-bottom: 10px; align-items: center; gap: 10px; background: #161922; padding: 8px; border-radius: 8px; }
         .image-preview-bar img { height: 40px; border-radius: 4px; }
         .input-box { display: flex; background: #161922; border: 1px solid #323849; border-radius: 12px; padding: 8px 12px; align-items: center; gap: 8px; }
-        .input-box input { flex: 1; background: transparent; border: none; color: #fff; font-size: 15px; outline: none; padding: 8px; }
-        .icon-btn { background: #232733; color: #fff; border: none; width: 38px; height: 38px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+        .input-box input { flex: 1; background: transparent; border: none; color: #ffffff; font-size: 15px; outline: none; padding: 8px; }
+        .icon-btn { background: #232733; color: #ffffff; border: none; width: 38px; height: 38px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; }
         .icon-btn:hover { background: #323849; }
-        .send-btn { background: #6366f1; color: #fff; border: none; width: 40px; height: 40px; border-radius: 8px; cursor: pointer; font-size: 18px; }
+        .send-btn { background: #6366f1; color: #ffffff; border: none; width: 40px; height: 40px; border-radius: 8px; cursor: pointer; font-size: 18px; }
         .send-btn:hover { background: #4f46e5; }
     </style>
 </head>
@@ -61,7 +65,7 @@
         <div class="chat-messages" id="chatMessages">
             <div class="message assistant">
                 <div class="avatar">Y</div>
-                <div class="bubble">Merhaba! Ben {{ assistant_name }}. Sesli konuşabilir, görsel gönderebilir veya mesaj yazabilirsin!</div>
+                <div class="bubble">Merhaba! Ben {{ assistant_name }}. Sana nasıl yardımcı olabilirim?</div>
             </div>
         </div>
 
@@ -154,7 +158,8 @@
             userInput.value = '';
             clearImage();
             
-            const botBubble = appendMessage('assistant', 'Y', 'Yazılıyor...');
+            // "Düşünüyor..." Yazısı Ekleniyor
+            const botBubble = appendMessage('assistant', 'Y', 'Yankı düşünüyor...', null, true);
 
             try {
                 const response = await fetch('/chat', {
@@ -165,10 +170,12 @@
 
                 if (!response.ok) {
                     botBubble.innerText = "Hata oluştu, tekrar deneyin.";
+                    botBubble.classList.remove('thinking-text');
                     return;
                 }
 
                 botBubble.innerText = "";
+                botBubble.classList.remove('thinking-text');
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let fullResponse = "";
@@ -201,10 +208,11 @@
 
             } catch (err) {
                 botBubble.innerText = "Bağlantı hatası oluştu.";
+                botBubble.classList.remove('thinking-text');
             }
         }
 
-        function appendMessage(role, avatarText, text, imgData = null) {
+        function appendMessage(role, avatarText, text, imgData = null, isThinking = false) {
             const msgDiv = document.createElement('div');
             msgDiv.className = `message ${role}`;
             
@@ -214,6 +222,7 @@
 
             const bubble = document.createElement('div');
             bubble.className = 'bubble';
+            if (isThinking) bubble.classList.add('thinking-text');
             bubble.innerText = text;
 
             if (imgData) {
