@@ -1,11 +1,11 @@
 import os
 import json
 import logging
+import urllib.request
 from flask import Flask, request, jsonify, render_template, redirect, url_for, flash, Response, stream_with_context
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-from huggingface_hub import InferenceClient
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -21,12 +21,8 @@ db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
-# Hızlı ve Stabil Model
-MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.2"
-client = InferenceClient(model=MODEL_ID)
-
 ASSISTANT_NAME = "Yankı"
-MODEL_NAME = "Mistral-7B (Hızlı & Stabil)"
+MODEL_NAME = "Qwen2.5-7B (Süper Hızlı)"
 
 SYSTEM_PROMPT = (
     "Sen 'Yankı' adında son derece akıllı, hızlı, yardımsever ve sempatik bir yapay zeka asistansın. "
@@ -112,7 +108,7 @@ def chat():
     chat_history = data.get("history") or []
 
     if not user_message and not image_data:
-        return jsonify({"error": "Mesaj veya görsel boş olamaz."}), 400
+        return jsonify({"error": "Mesaj boş olamaz."}), 400
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
@@ -124,30 +120,48 @@ def chat():
 
     content_payload = user_message
     if image_data:
-        content_payload = f"[Görsel Yüklendi] {user_message if user_message else 'Bu görseli analiz et ve açıkla.'}"
+        content_payload = f"[Görsel Yüklendi] {user_message if user_message else 'Görseli açıkla.'}"
 
     messages.append({"role": "user", "content": content_payload})
 
     def generate():
         try:
-            response_stream = client.chat_completion(
-                messages=messages,
-                max_tokens=1024,
-                stream=True,
-                temperature=0.7,
+            # Doğrudan açık Hugging Face Inference Router
+            url = "https://router.huggingface.co/hf-inference/v1/chat/completions"
+            payload = json.dumps({
+                "model": "Qwen/Qwen2.5-7B-Instruct",
+                "messages": messages,
+                "stream": True,
+                "max_tokens": 1024,
+                "temperature": 0.7
+            }).encode('utf-8')
+
+            req = urllib.request.Request(
+                url, 
+                data=payload, 
+                headers={"Content-Type": "application/json"}
             )
 
-            for chunk in response_stream:
-                if hasattr(chunk, "choices") and chunk.choices:
-                    delta_content = getattr(chunk.choices[0].delta, "content", None)
-                    if delta_content:
-                        yield json.dumps({"delta": delta_content}, ensure_ascii=False) + "\n"
+            with urllib.request.urlopen(req) as response:
+                for line in response:
+                    line_str = line.decode('utf-8').strip()
+                    if line_str.startswith("data: "):
+                        data_json = line_str[6:]
+                        if data_json == "[DONE]":
+                            break
+                        try:
+                            parsed = json.loads(data_json)
+                            delta = parsed["choices"][0]["delta"].get("content", "")
+                            if delta:
+                                yield json.dumps({"delta": delta}, ensure_ascii=False) + "\n"
+                        except Exception:
+                            pass
 
             yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
 
         except Exception as e:
             logging.error(f"Yapay zeka hatası: {e}")
-            yield json.dumps({"error": "Sunucu yanıt vermedi, lütfen tekrar deneyin."}, ensure_ascii=False) + "\n"
+            yield json.dumps({"error": "Sistem şu an yanıt veremiyor, lütfen tekrar deneyin."}, ensure_ascii=False) + "\n"
 
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
 
