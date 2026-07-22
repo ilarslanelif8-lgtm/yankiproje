@@ -26,9 +26,11 @@ ASSISTANT_NAME = "Yankı"
 MODEL_NAME = "Yankı-AI"
 
 SYSTEM_PROMPT = (
-    "Sen 'Yankı' adında akıllı ve Türkçe konuşan bir yapay zeka asistansın. "
-    "Sana sunulan CANLI BİLGİLERİ doğrudan kullanarak altın, döviz, haber ve hava durumu sorularına %100 GERÇEK VE GÜNCEL rakamlarla cevap ver. "
-    "Asla eski yılların fiyatlarını uydurma."
+    "Sen 'Yankı' adında doğal, samimi ve Türkçe konuşan bir yapay zeka asistansın.\n"
+    "ÖNEMLİ KURALLAR:\n"
+    "1. Kullanıcı sana 'merhaba', 'selam', 'nasılsın' gibi bir selam verdiğinde kesinlikle 'bana altın sorabilirsiniz', 'fotoğraf yükleyebilirsiniz' veya 'benim yeteneklerim şunlardır' gibi gereksiz açıklamalar yapma! Sadece samimi ve kısa bir şekilde karşılık ver (Örn: 'Merhaba! Nasıl yardımcı olabilirim?').\n"
+    "2. Yalnızca kullanıcı spesifik olarak altın, döviz, hava durumu veya güncel bir konu sorduğunda sana sağlanan CANLI VERİLERİ kullanarak cevap ver.\n"
+    "3. Yanıtlarında doğal ve akıcı bir dil kullan."
 )
 
 class User(UserMixin, db.Model):
@@ -59,7 +61,7 @@ with app.app_context():
     db.create_all()
 
 def get_live_market_data():
-    """Canlı altın ve döviz kurlarını direkt finans servisinden çeker"""
+    """Canlı altın ve döviz kurlarını çekme fonksiyonu"""
     try:
         url = "https://api.genelpara.com/embed/altin.json"
         res = requests.get(url, timeout=5)
@@ -70,8 +72,8 @@ def get_live_market_data():
             y = data.get("Y", {})
             t = data.get("T", {})
             return (
-                f"CANLI FİNANS VERİLERİ (ANLIK):\n"
-                f"- Gram Altın Alış: {ga.get('alis')} TL | Satış: {ga.get('satis')} TL (Değişim: %{ga.get('degisim')})\n"
+                f"CANLI FİNANS VERİLERİ (ANLIK PİYASA):\n"
+                f"- Gram Altın Alış: {ga.get('alis')} TL | Satış: {ga.get('satis')} TL\n"
                 f"- Çeyrek Altın Alış: {c.get('alis')} TL | Satış: {c.get('satis')} TL\n"
                 f"- Yarım Altın Alış: {y.get('alis')} TL | Satış: {y.get('satis')} TL\n"
                 f"- Tam Altın Alış: {t.get('alis')} TL | Satış: {t.get('satis')} TL"
@@ -167,16 +169,17 @@ def chat():
     api_key = os.environ.get("GROQ_API_KEY", "")
 
     search_context = ""
-    # Soru altın/döviz ile ilgiliyse direkt anlık borsa verisini çek
     msg_lower = user_message.lower()
+    
+    # YALNIZCA kullanıcı direkt finans sorduğunda piyasa verisi ekle
     if any(k in msg_lower for k in ["altın", "altin", "gram", "çeyrek", "ceyrek", "dolar", "euro"]):
         live_data = get_live_market_data()
         if live_data:
-            search_context = f"\n\n[{live_data}]\n\nBu verileri kullanarak kullanıcıya kesin ve net cevap ver."
-    elif user_message and not image_base64:
+            search_context = f"\n\n[{live_data}]\n\nBu verileri kullanarak tam olarak sorulan soruya net cevap ver."
+    elif user_message and not image_base64 and not any(k in msg_lower for k in ["merhaba", "selam", "nasılsın", "günaydın", "iyi akşamlar"]):
         web_data = search_web_fallback(user_message)
         if web_data:
-            search_context = f"\n\n[İNTERNET ARAMA SONUÇLARI]:\n{web_data}"
+            search_context = f"\n\n[İNERNET ARAMA SONUÇLARI]:\n{web_data}"
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT + search_context}]
     for m in recent_db_messages[:-1]:
