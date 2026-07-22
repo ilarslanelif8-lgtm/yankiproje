@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import requests
+from datetime import datetime
 from flask import Flask, request, jsonify, render_template, redirect, url_for, flash, Response, stream_with_context
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
@@ -28,19 +29,29 @@ MODEL_NAME = "Yankı-AI"
 SYSTEM_PROMPT = (
     "Sen 'Yankı' adında akıllı, samimi ve yardımsever bir yapay zeka asistansın. "
     "Kullanıcıya Türkçe, düzgün, imla kurallarına uygun, nazik ve net yanıtlar ver. "
-    "Sana sunulan internet arama sonuçlarını kullanarak güncel bilgileri (döviz, altın, hava durumu, haberler) doğru şekilde sun."
+    "Sana sunulan internet arama sonuçlarını kullanarak güncel bilgileri (döviz, altın, hava durumu, saat, haberler) doğru şekilde sun. "
+    "Eğer kullanıcı görsel gönderdiyse görseldeki detayları inceleyip doğru cevap ver."
 )
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
+    messages = db.relationship('ChatMessage', backref='user', lazy=True)
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+
+class ChatMessage(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    role = db.Column(db.String(20), nullable=False) # 'user' veya 'assistant'
+    content = db.Column(db.Text, nullable=False)
+    image_url = db.Column(db.Text, nullable=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -50,11 +61,10 @@ with app.app_context():
     db.create_all()
 
 def search_internet(query):
-    """İnternette arama yapıp canlı bilgileri çeker"""
     try:
         results = []
         with DDGS() as ddgs:
-            for r in ddgs.text(query, region='tr-tr', max_results=3):
+            for r in ddgs.text(query, region='tr-tr', max_results=4):
                 results.append(f"Başlık: {r.get('title')}\nÖzet: {r.get('body')}")
         return "\n\n".join(results)
     except Exception as e:
@@ -64,7 +74,9 @@ def search_internet(query):
 @app.route("/")
 @login_required
 def index():
-    return render_template("index.html", model_name=MODEL_NAME, assistant_name=ASSISTANT_NAME, user=current_user)
+    # Kullanıcının geçmiş mesajlarını veritabanından getir
+    history_messages = ChatMessage.query.filter_by(user_id=current_user.id).order_by(ChatMessage.timestamp.asc()).all()
+    return render_template("index.html", model_name=MODEL_NAME, assistant_name=ASSISTANT_NAME, user=current_user, history=history_messages)
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
@@ -83,8 +95,8 @@ def register():
         new_user.set_password(password)
         db.session.add(new_user)
         db.session.commit()
-        flash("Kayıt başarılı! Şimdi giriş yapabilirsiniz.", "success")
-        return redirect(url_for('login'))
+        login_user(new_user, remember=True) # Oturumu sürekli açık tut
+        return redirect(url_for('index'))
     return render_template("register.html")
 
 @app.route("/login", methods=["GET", "POST"])
@@ -96,7 +108,7 @@ def login():
         password = request.form.get("password", "").strip()
         user = User.query.filter_by(email=email).first()
         if user and user.check_password(password):
-            login_user(user)
+            login_user(user, remember=True) # Oturumu kapatana kadar hatırla
             return redirect(url_for('index'))
         else:
             flash("E-posta veya şifre hatalı!", "danger")
@@ -118,35 +130,41 @@ def chat():
 
     user_message = (data.get("message") or "").strip()
     image_base64 = data.get("image")
-    chat_history = data.get("history") or []
 
     if not user_message and not image_base64:
         return jsonify({"error": "Mesaj veya görsel boş olamaz."}), 400
 
+    # Kullanıcı mesajını veritabanına kaydet
+    user_msg_record = ChatMessage(user_id=current_user.id, role="user", content=user_message, image_url=image_base64)
+    db.session.add(user_msg_record)
+    db.session.commit()
+
+    # Veritabanından son 10 mesajı alıp hafızaya yükle
+    recent_db_messages = ChatMessage.query.filter_by(user_id=current_user.id).order_by(ChatMessage.timestamp.desc()).limit(10).all()
+    recent_db_messages.reverse()
+
     api_key = os.environ.get("GROQ_API_KEY", "")
 
-    # İnternet Araması Tetikleme (Hava durumu, altın, dolar, bugün, haber vb. kelimelerde)
-    search_keywords = ["altın", "dolar", "euro", "hava", "kaç derece", "bugün", "haber", "fiyat", "kimdir", "ne zaman"]
     search_context = ""
-    if user_message and any(kw in user_message.lower() for kw in search_keywords) and not image_base64:
+    if user_message and not image_base64:
         search_data = search_internet(user_message)
         if search_data:
-            search_context = f"\n\n[İnternet Canlı Bilgileri]:\n{search_data}\n\nBu canlı bilgileri kullanarak kullanıcıya doğru yanıt ver."
+            search_context = f"\n\n[İnternet Canlı Bilgileri]:\n{search_data}\n\nBu canlı internet bilgilerini kullanarak yanıt ver."
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT + search_context}]
-    for h in chat_history[-6:]:
-        if h.get("role") in ["user", "assistant"] and h.get("content"):
-            messages.append({"role": h["role"], "content": h["content"]})
-
-    model_name = "llama-3.2-11b-vision-preview" if image_base64 else "llama-3.3-70b-versatile"
+    for m in recent_db_messages[:-1]:
+        if m.content:
+            messages.append({"role": m.role, "content": m.content})
 
     if image_base64:
+        model_name = "llama-3.2-90b-vision-preview"
         content_payload = [
-            {"type": "text", "text": user_message if user_message else "Bu görselde ne var?"},
+            {"type": "text", "text": user_message if user_message else "Bu görselde ne var? Detaylıca açıkla."},
             {"type": "image_url", "image_url": {"url": image_base64}}
         ]
         messages.append({"role": "user", "content": content_payload})
     else:
+        model_name = "llama-3.3-70b-versatile"
         messages.append({"role": "user", "content": user_message})
 
     def generate():
@@ -155,6 +173,7 @@ def chat():
             yield json.dumps({"done": True}) + "\n"
             return
 
+        full_assistant_reply = ""
         try:
             headers = {
                 "Authorization": f"Bearer {api_key}",
@@ -166,7 +185,7 @@ def chat():
                 "stream": True
             }
 
-            res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, stream=True, timeout=25)
+            res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, stream=True, timeout=30)
 
             if res.status_code == 200:
                 for line in res.iter_lines():
@@ -180,11 +199,19 @@ def chat():
                                 parsed = json.loads(data_str)
                                 chunk = parsed['choices'][0]['delta'].get('content', '')
                                 if chunk:
+                                    full_assistant_reply += chunk
                                     yield json.dumps({"delta": chunk}, ensure_ascii=False) + "\n"
                             except Exception:
                                 continue
             else:
                 yield json.dumps({"delta": "Yanıt alınamadı, lütfen tekrar deneyin."}, ensure_ascii=False) + "\n"
+
+            # Yapay zekanın cevabını veritabanına kaydet
+            if full_assistant_reply:
+                with app.app_context():
+                    assistant_msg_record = ChatMessage(user_id=current_user.id, role="assistant", content=full_assistant_reply)
+                    db.session.add(assistant_msg_record)
+                    db.session.commit()
 
             yield json.dumps({"done": True}) + "\n"
 
