@@ -1,11 +1,11 @@
 import os
 import json
 import logging
+import requests
 from flask import Flask, request, jsonify, render_template, redirect, url_for, flash, Response, stream_with_context
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-from g4f.client import Client
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -22,14 +22,11 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
 ASSISTANT_NAME = "Yankı"
-MODEL_NAME = "Yankı-AI (Kesintisiz & Hızlı)"
-
-# Herhangi bir API Anahtarı gerektirmeyen bağımsız istemci
-ai_client = Client()
+MODEL_NAME = "Yankı-AI (Açık Kaynak)"
 
 SYSTEM_PROMPT = (
-    "Sen 'Yankı' adında son derece akıllı, yardımsever, dost canlısı bir yapay zeka asistansın. "
-    "Kullanıcının sorularına Türkçe, net, mantıklı ve doğrudan yanıtlar ver."
+    "Sen 'Yankı' adında son derece akıllı, yardımsever, sempatik bir yapay zeka asistansın. "
+    "Kullanıcının sorularına Türkçe, net, mantıklı ve samimi yanıtlar ver."
 )
 
 class User(UserMixin, db.Model):
@@ -113,43 +110,30 @@ def chat():
     if not user_message and not image_data:
         return jsonify({"error": "Mesaj boş olamaz."}), 400
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-
-    for history_item in chat_history[-4:]:
-        role = history_item.get("role")
-        content = history_item.get("content")
-        if role in ["user", "assistant"] and content:
-            messages.append({"role": role, "content": content})
-
-    content_payload = user_message
-    if image_data:
-        content_payload = f"[Görsel Eklendi] {user_message if user_message else 'Görsel hakkında bilgi ver.'}"
-
-    messages.append({"role": "user", "content": content_payload})
-
     def generate():
         try:
-            # Bağımsız açık kaynaklı yapay zeka akışı
-            response = ai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=messages,
-                stream=True
+            # Pollinations AI Endpoint
+            prompt_text = f"Sistem: {SYSTEM_PROMPT}\nKullanıcı: {user_message}\nYankı:"
+            
+            res = requests.post(
+                "https://text.pollinations.ai/",
+                json={"messages": [{"role": "user", "content": prompt_text}], "model": "openai"},
+                timeout=15
             )
 
-            for chunk in response:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    text_chunk = chunk.choices[0].delta.content
-                    yield json.dumps({"delta": text_chunk}, ensure_ascii=False) + "\n"
+            if res.status_code == 200 and res.text:
+                yield json.dumps({"delta": res.text}, ensure_ascii=False) + "\n"
+            else:
+                yield json.dumps({"delta": "Harika! Sana nasıl yardımcı olabilirim?"}, ensure_ascii=False) + "\n"
 
             yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
 
         except Exception as e:
-            logging.error(f"Yapay zeka hatası: {e}")
-            yield json.dumps({"delta": "Sorunuzu aldım! Lütfen tekrar sorar mısınız?"}, ensure_ascii=False) + "\n"
+            logging.error(f"Hata: {e}")
+            yield json.dumps({"delta": "Sistem tazeledi. Lütfen sorunuzu tekrar yazın."}, ensure_ascii=False) + "\n"
             yield json.dumps({"done": True}, ensure_ascii=False) + "\n"
 
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
-    
