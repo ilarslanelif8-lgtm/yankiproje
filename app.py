@@ -22,7 +22,7 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
 ASSISTANT_NAME = "Yankı"
-MODEL_NAME = "Qwen2.5-7B (Süper Hızlı)"
+MODEL_NAME = "Qwen2.5-7B"
 
 SYSTEM_PROMPT = (
     "Sen 'Yankı' adında son derece akıllı, hızlı, yardımsever ve sempatik bir yapay zeka asistansın. "
@@ -126,7 +126,6 @@ def chat():
 
     def generate():
         try:
-            # Doğrudan açık Hugging Face Inference Router
             url = "https://router.huggingface.co/hf-inference/v1/chat/completions"
             payload = json.dumps({
                 "model": "Qwen/Qwen2.5-7B-Instruct",
