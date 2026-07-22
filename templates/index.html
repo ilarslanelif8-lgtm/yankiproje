@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Yankı — Akıllı Asistan</title>
-    <link rel="icon" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/svgs/solid/wand-magic-sparkles.svg" type="image/svg+xml">
+    
+    <link rel="icon" href="https://img.icons8.com/?size=100&id=t7O2zTh8uMvA&format=png" type="image/png">
+    
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -27,6 +29,20 @@
             flex-direction: column;
             padding: 20px;
             transition: all 0.3s ease;
+        }
+        .app-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 22px;
+            font-weight: bold;
+            color: #818cf8;
+            margin-bottom: 25px;
+        }
+        .app-brand img {
+            width: 38px;
+            height: 38px;
+            filter: drop-shadow(0 0 8px #6366f1);
         }
         .main-chat {
             flex: 1;
@@ -102,7 +118,7 @@
         }
 
         .bubble img {
-            max-width: 100%;
+            max-width: 250px;
             border-radius: 10px;
             margin-bottom: 8px;
             display: block;
@@ -192,12 +208,15 @@
 <body>
 
     <div class="sidebar">
-        <h4 class="mb-4 text-primary"><i class="fa-solid fa-wand-magic-sparkles"></i> Yankı</h4>
+        <div class="app-brand">
+            <img src="https://img.icons8.com/?size=100&id=t7O2zTh8uMvA&format=png" alt="Yankı Logo">
+            <span>Yankı</span>
+        </div>
         <button class="btn btn-outline-light w-100 text-start mb-3" onclick="location.reload()">
-            <i class="fa-solid fa-plus me-2"></i> Yeni Sohbet
+            <i class="fa-solid fa-plus me-2"></i> Yenile / Başlat
         </button>
         <div class="mt-auto pt-3 border-top border-secondary">
-            <small class="text-muted d-block mb-2">{{ user.email }}</small>
+            <small class="text-muted d-block mb-2"><i class="fa-solid fa-user me-1"></i> {{ user.email }}</small>
             <a href="/logout" class="btn btn-sm btn-outline-danger w-100"><i class="fa-solid fa-right-from-bracket"></i> Çıkış Yap</a>
         </div>
     </div>
@@ -205,8 +224,8 @@
     <div class="main-chat">
         <div class="header-bar">
             <span class="badge bg-secondary p-2"><i class="fa-solid fa-bolt"></i> Hızlı Sunucu</span>
-            <span class="badge bg-primary p-2"><i class="fa-solid fa-globe"></i> İnternet Erişimi Aktif</span>
-            <span class="badge bg-success p-2"><i class="fa-solid fa-circle"></i> Sistem Aktif</span>
+            <span class="badge bg-primary p-2"><i class="fa-solid fa-globe"></i> İnternet & Görsel Desteği</span>
+            <span class="badge bg-success p-2"><i class="fa-solid fa-database"></i> Geçmiş Kaydediliyor</span>
         </div>
 
         <div class="chat-box" id="chatBox">
@@ -214,6 +233,23 @@
                 <div class="avatar assistant">Y</div>
                 <div class="bubble">Merhaba! Ben Yankı. Nasıl yardımcı olabilirim? Bugün ne yapmak istersin? 😊</div>
             </div>
+
+            {% for msg in history %}
+                {% if msg.role == 'user' %}
+                    <div class="message-row user">
+                        <div class="avatar user">S</div>
+                        <div class="bubble">
+                            {% if msg.image_url %}<img src="{{ msg.image_url }}">{% endif %}
+                            {% if msg.content %}<div>{{ msg.content }}</div>{% endif %}
+                        </div>
+                    </div>
+                {% else %}
+                    <div class="message-row assistant">
+                        <div class="avatar assistant">Y</div>
+                        <div class="bubble">{{ msg.content }}</div>
+                    </div>
+                {% endif %}
+            {% endfor %}
         </div>
 
         <div class="input-area">
@@ -231,17 +267,20 @@
                 </button>
                 <input type="file" id="imageInput" accept="image/*" style="display: none;" onchange="handleImageUpload(event)">
 
-                <input type="text" id="userInput" placeholder="Bir şeyler yazın..." onkeydown="if(event.key==='Enter') sendMessage()">
+                <input type="text" id="userInput" placeholder="Bir şeyler yazın veya görsel yükleyin..." onkeydown="if(event.key==='Enter') sendMessage()">
                 <button class="btn-send" onclick="sendMessage()"><i class="fa-solid fa-paper-plane"></i></button>
             </div>
         </div>
     </div>
 
     <script>
-        let chatHistory = [];
         let ttsEnabled = false;
         let selectedBase64Image = null;
         let femaleVoice = null;
+
+        // Sayfa açıldığında en aşağı kaydır
+        const chatBox = document.getElementById('chatBox');
+        chatBox.scrollTop = chatBox.scrollHeight;
 
         function loadVoices() {
             if ('speechSynthesis' in window) {
@@ -314,7 +353,6 @@
             
             if (!message && !selectedBase64Image) return;
 
-            const chatBox = document.getElementById('chatBox');
             const imgToSend = selectedBase64Image;
 
             let userContentHtml = '';
@@ -351,7 +389,7 @@
                 const res = await fetch('/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: message, image: imgToSend, history: chatHistory })
+                    body: JSON.stringify({ message: message, image: imgToSend })
                 });
 
                 const reader = res.body.getReader();
@@ -382,8 +420,6 @@
                 if (!fullText) {
                     responseBubble.innerText = 'Yanıt alınamadı, lütfen tekrar deneyin.';
                 } else {
-                    chatHistory.push({ role: 'user', content: message ? message : 'Görsel gönderildi' });
-                    chatHistory.push({ role: 'assistant', content: fullText });
                     speakText(fullText);
                 }
 
