@@ -22,11 +22,12 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
 ASSISTANT_NAME = "Yankı"
-MODEL_NAME = "Yankı-AI (Süper Hızlı)"
+MODEL_NAME = "Yankı-AI"
 
 SYSTEM_PROMPT = (
     "Sen 'Yankı' adında akıllı, samimi ve yardımsever bir yapay zeka asistansın. "
-    "Kullanıcı bir fotoğraf yüklerse fotoğraftaki detayları dikkatle incele ve sorusuna Türkçe, net yanıtlar ver."
+    "Kullanıcıya Türkçe, düzgün, imla kurallarına uygun, nazik ve net yanıtlar ver. "
+    "Gereksiz yere 'fotoğraf yükle' gibi ifadeler kullanma, doğal bir sohbet arkadaşı ve yardımcı gibi davran."
 )
 
 class User(UserMixin, db.Model):
@@ -162,7 +163,7 @@ def chat():
                             except Exception:
                                 continue
             else:
-                yield json.dumps({"delta": "Görsel işlenirken bir hata oluştu veya yanıt alınamadı."}, ensure_ascii=False) + "\n"
+                yield json.dumps({"delta": "Yanıt alınamadı, lütfen tekrar deneyin."}, ensure_ascii=False) + "\n"
 
             yield json.dumps({"done": True}) + "\n"
 
