@@ -7,7 +7,7 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, f
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-from duckduckgo_search import DDGS
+from googlesearch import search
 
 logging.basicConfig(level=logging.INFO)
 
@@ -27,10 +27,10 @@ ASSISTANT_NAME = "Yankı"
 MODEL_NAME = "Yankı-AI"
 
 SYSTEM_PROMPT = (
-    "Sen 'Yankı' adında akıllı, samimi ve yardımsever bir yapay zeka asistansın. "
-    "Kullanıcıya Türkçe, düzgün, imla kurallarına uygun, nazik ve net yanıtlar ver. "
-    "Sana sunulan internet arama sonuçlarını kullanarak güncel bilgileri (döviz, altın, hava durumu, saat, haberler) doğru şekilde sun. "
-    "Eğer kullanıcı görsel gönderdiyse görseldeki detayları inceleyip doğru cevap ver."
+    "Sen 'Yankı' adında son derece akıllı, samimi ve Türkçe konuşan bir yapay zeka asistansın. "
+    "Kullanıcıya nazik, net ve imla kurallarına uygun yanıtlar ver. "
+    "Sana sağlanan Google internet arama verilerini kullanarak canlı/güncel bilgileri (altın, döviz, hava durumu, saat, haberler) eksiksiz sun. "
+    "Kullanıcı görsel yüklediyse görseldeki detayları dikkatlice analiz edip yanıtla."
 )
 
 class User(UserMixin, db.Model):
@@ -48,7 +48,7 @@ class User(UserMixin, db.Model):
 class ChatMessage(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    role = db.Column(db.String(20), nullable=False) # 'user' veya 'assistant'
+    role = db.Column(db.String(20), nullable=False)
     content = db.Column(db.Text, nullable=False)
     image_url = db.Column(db.Text, nullable=True)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
@@ -60,21 +60,23 @@ def load_user(user_id):
 with app.app_context():
     db.create_all()
 
-def search_internet(query):
+def search_google(query):
+    """Google üzerinde canlı arama yapıp link ve özet getirir"""
     try:
         results = []
-        with DDGS() as ddgs:
-            for r in ddgs.text(query, region='tr-tr', max_results=4):
-                results.append(f"Başlık: {r.get('title')}\nÖzet: {r.get('body')}")
-        return "\n\n".join(results)
+        # Google'dan en alakalı 3 sonucu çekiyoruz
+        for url in search(query, num_results=3, lang="tr"):
+            results.append(f"Kaynak Linki: {url}")
+        if results:
+            return "\n".join(results)
+        return ""
     except Exception as e:
-        logging.error(f"Arama hatası: {e}")
+        logging.error(f"Google Arama hatası: {e}")
         return ""
 
 @app.route("/")
 @login_required
 def index():
-    # Kullanıcının geçmiş mesajlarını veritabanından getir
     history_messages = ChatMessage.query.filter_by(user_id=current_user.id).order_by(ChatMessage.timestamp.asc()).all()
     return render_template("index.html", model_name=MODEL_NAME, assistant_name=ASSISTANT_NAME, user=current_user, history=history_messages)
 
@@ -95,7 +97,7 @@ def register():
         new_user.set_password(password)
         db.session.add(new_user)
         db.session.commit()
-        login_user(new_user, remember=True) # Oturumu sürekli açık tut
+        login_user(new_user, remember=True)
         return redirect(url_for('index'))
     return render_template("register.html")
 
@@ -108,7 +110,7 @@ def login():
         password = request.form.get("password", "").strip()
         user = User.query.filter_by(email=email).first()
         if user and user.check_password(password):
-            login_user(user, remember=True) # Oturumu kapatana kadar hatırla
+            login_user(user, remember=True)
             return redirect(url_for('index'))
         else:
             flash("E-posta veya şifre hatalı!", "danger")
@@ -134,32 +136,33 @@ def chat():
     if not user_message and not image_base64:
         return jsonify({"error": "Mesaj veya görsel boş olamaz."}), 400
 
-    # Kullanıcı mesajını veritabanına kaydet
+    # Kullanıcı mesajını kaydet
     user_msg_record = ChatMessage(user_id=current_user.id, role="user", content=user_message, image_url=image_base64)
     db.session.add(user_msg_record)
     db.session.commit()
 
-    # Veritabanından son 10 mesajı alıp hafızaya yükle
-    recent_db_messages = ChatMessage.query.filter_by(user_id=current_user.id).order_by(ChatMessage.timestamp.desc()).limit(10).all()
+    recent_db_messages = ChatMessage.query.filter_by(user_id=current_user.id).order_by(ChatMessage.timestamp.desc()).limit(8).all()
     recent_db_messages.reverse()
 
     api_key = os.environ.get("GROQ_API_KEY", "")
 
     search_context = ""
+    # Görsel yoksa doğrudan Google araması yaptır
     if user_message and not image_base64:
-        search_data = search_internet(user_message)
-        if search_data:
-            search_context = f"\n\n[İnternet Canlı Bilgileri]:\n{search_data}\n\nBu canlı internet bilgilerini kullanarak yanıt ver."
+        google_res = search_google(user_message)
+        if google_res:
+            search_context = f"\n\n[Google Canlı Arama Sonuçları]:\n{google_res}\n\nLütfen bu canlı Google sonuçlarını göz önüne alarak soruya en güncel bilgiyi sağla."
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT + search_context}]
     for m in recent_db_messages[:-1]:
         if m.content:
             messages.append({"role": m.role, "content": m.content})
 
+    # Görsel desteği ve Genel Model ayrımı
     if image_base64:
-        model_name = "llama-3.2-90b-vision-preview"
+        model_name = "llama-3.2-11b-vision-preview"
         content_payload = [
-            {"type": "text", "text": user_message if user_message else "Bu görselde ne var? Detaylıca açıkla."},
+            {"type": "text", "text": user_message if user_message else "Bu görselde ne görüyorsun? Açıkla."},
             {"type": "image_url", "image_url": {"url": image_base64}}
         ]
         messages.append({"role": "user", "content": content_payload})
@@ -206,7 +209,6 @@ def chat():
             else:
                 yield json.dumps({"delta": "Yanıt alınamadı, lütfen tekrar deneyin."}, ensure_ascii=False) + "\n"
 
-            # Yapay zekanın cevabını veritabanına kaydet
             if full_assistant_reply:
                 with app.app_context():
                     assistant_msg_record = ChatMessage(user_id=current_user.id, role="assistant", content=full_assistant_reply)
