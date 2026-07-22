@@ -26,11 +26,10 @@ ASSISTANT_NAME = "Yankı"
 MODEL_NAME = "Yankı-AI"
 
 SYSTEM_PROMPT = (
-    "Sen 'Yankı' adında doğal, samimi ve Türkçe konuşan bir yapay zeka asistansın.\n"
-    "ÖNEMLİ KURALLAR:\n"
-    "1. Kullanıcı sana 'merhaba', 'selam', 'nasılsın' gibi bir selam verdiğinde kesinlikle 'bana altın sorabilirsiniz', 'fotoğraf yükleyebilirsiniz' veya 'benim yeteneklerim şunlardır' gibi gereksiz açıklamalar yapma! Sadece samimi ve kısa bir şekilde karşılık ver (Örn: 'Merhaba! Nasıl yardımcı olabilirim?').\n"
-    "2. Yalnızca kullanıcı spesifik olarak altın, döviz, hava durumu veya güncel bir konu sorduğunda sana sağlanan CANLI VERİLERİ kullanarak cevap ver.\n"
-    "3. Yanıtlarında doğal ve akıcı bir dil kullan."
+    "Sen 'Yankı' adında samimi, akıllı ve Türkçe konuşan bir yapay zeka asistansın.\n"
+    "KURALLAR:\n"
+    "1. Kullanıcı sadece 'merhaba', 'selam' veya 'nasılsın' dediğinde kısa, kibar ve doğal bir şekilde selamlaş. 'Bana şunu sorabilirsin' diyerek liste sunma.\n"
+    "2. Yalnızca kullanıcı spesifik olarak altın, döviz veya hava durumu sorduğunda canlı verileri kullanarak net cevap ver."
 )
 
 class User(UserMixin, db.Model):
@@ -61,40 +60,21 @@ with app.app_context():
     db.create_all()
 
 def get_live_market_data():
-    """Canlı altın ve döviz kurlarını çekme fonksiyonu"""
+    """Canlı altın verilerini çeker"""
     try:
         url = "https://api.genelpara.com/embed/altin.json"
-        res = requests.get(url, timeout=5)
+        res = requests.get(url, timeout=3)
         if res.status_code == 200:
             data = res.json()
             ga = data.get("GA", {})
             c = data.get("C", {})
-            y = data.get("Y", {})
-            t = data.get("T", {})
             return (
-                f"CANLI FİNANS VERİLERİ (ANLIK PİYASA):\n"
-                f"- Gram Altın Alış: {ga.get('alis')} TL | Satış: {ga.get('satis')} TL\n"
-                f"- Çeyrek Altın Alış: {c.get('alis')} TL | Satış: {c.get('satis')} TL\n"
-                f"- Yarım Altın Alış: {y.get('alis')} TL | Satış: {y.get('satis')} TL\n"
-                f"- Tam Altın Alış: {t.get('alis')} TL | Satış: {t.get('satis')} TL"
+                f"CANLI FİNANS VERİSİ:\n"
+                f"- Gram Altın: Alış {ga.get('alis')} TL / Satış {ga.get('satis')} TL\n"
+                f"- Çeyrek Altın: Alış {c.get('alis')} TL / Satış {c.get('satis')} TL"
             )
     except Exception as e:
-        logging.error(f"Finans servisi hatası: {e}")
-    return ""
-
-def search_web_fallback(query):
-    """Genel aramalar için yedek arama servisi"""
-    try:
-        url = f"https://html.duckduckgo.com/html/?q={query}"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-        res = requests.get(url, headers=headers, timeout=5)
-        if res.status_code == 200:
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(res.text, 'html.parser')
-            results = [a.get_text() for a in soup.find_all('a', class_='result__snippet')[:3]]
-            return "\n".join(results)
-    except Exception:
-        pass
+        logging.error(f"Finans hatası: {e}")
     return ""
 
 @app.route("/")
@@ -163,7 +143,7 @@ def chat():
     db.session.add(user_msg_record)
     db.session.commit()
 
-    recent_db_messages = ChatMessage.query.filter_by(user_id=current_user.id).order_by(ChatMessage.timestamp.desc()).limit(8).all()
+    recent_db_messages = ChatMessage.query.filter_by(user_id=current_user.id).order_by(ChatMessage.timestamp.desc()).limit(6).all()
     recent_db_messages.reverse()
 
     api_key = os.environ.get("GROQ_API_KEY", "")
@@ -171,15 +151,11 @@ def chat():
     search_context = ""
     msg_lower = user_message.lower()
     
-    # YALNIZCA kullanıcı direkt finans sorduğunda piyasa verisi ekle
-    if any(k in msg_lower for k in ["altın", "altin", "gram", "çeyrek", "ceyrek", "dolar", "euro"]):
+    # Sadece finans kelimeleri geçtiğinde istek at
+    if any(k in msg_lower for k in ["altın", "altin", "gram", "çeyrek", "ceyrek"]):
         live_data = get_live_market_data()
         if live_data:
-            search_context = f"\n\n[{live_data}]\n\nBu verileri kullanarak tam olarak sorulan soruya net cevap ver."
-    elif user_message and not image_base64 and not any(k in msg_lower for k in ["merhaba", "selam", "nasılsın", "günaydın", "iyi akşamlar"]):
-        web_data = search_web_fallback(user_message)
-        if web_data:
-            search_context = f"\n\n[İNERNET ARAMA SONUÇLARI]:\n{web_data}"
+            search_context = f"\n\n[{live_data}]"
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT + search_context}]
     for m in recent_db_messages[:-1]:
@@ -189,7 +165,7 @@ def chat():
     if image_base64:
         model_name = "llama-3.2-11b-vision-preview"
         content_payload = [
-            {"type": "text", "text": user_message if user_message else "Görseli incele ve açıkla."},
+            {"type": "text", "text": user_message if user_message else "Görseli incele."},
             {"type": "image_url", "image_url": {"url": image_base64}}
         ]
         messages.append({"role": "user", "content": content_payload})
@@ -199,7 +175,7 @@ def chat():
 
     def generate():
         if not api_key:
-            yield json.dumps({"delta": "Sistem API anahtarı eksik."}, ensure_ascii=False) + "\n"
+            yield json.dumps({"delta": "GROQ_API_KEY ortam değişkeni eklenmemiş."}, ensure_ascii=False) + "\n"
             yield json.dumps({"done": True}) + "\n"
             return
 
@@ -215,7 +191,7 @@ def chat():
                 "stream": True
             }
 
-            res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, stream=True, timeout=30)
+            res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, stream=True, timeout=15)
 
             if res.status_code == 200:
                 for line in res.iter_lines():
@@ -234,7 +210,7 @@ def chat():
                             except Exception:
                                 continue
             else:
-                yield json.dumps({"delta": "Yanıt alınamadı, lütfen tekrar deneyin."}, ensure_ascii=False) + "\n"
+                yield json.dumps({"delta": "Servis yanıt veremedi, lütfen tekrar deneyin."}, ensure_ascii=False) + "\n"
 
             if full_assistant_reply:
                 with app.app_context():
@@ -245,7 +221,7 @@ def chat():
             yield json.dumps({"done": True}) + "\n"
 
         except Exception as e:
-            yield json.dumps({"delta": f"Hata oluştu: {str(e)}"}, ensure_ascii=False) + "\n"
+            yield json.dumps({"delta": f"Bağlantı hatası: {str(e)}"}, ensure_ascii=False) + "\n"
             yield json.dumps({"done": True}) + "\n"
 
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson; charset=utf-8")
