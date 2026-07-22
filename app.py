@@ -2,8 +2,6 @@ import os
 import json
 import logging
 import requests
-import urllib.parse
-from bs4 import BeautifulSoup
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, redirect, url_for, flash, Response, stream_with_context
 from flask_sqlalchemy import SQLAlchemy
@@ -29,8 +27,8 @@ MODEL_NAME = "Yankı-AI"
 
 SYSTEM_PROMPT = (
     "Sen 'Yankı' adında akıllı ve Türkçe konuşan bir yapay zeka asistansın. "
-    "Kullanıcıya nazik ve doğru yanıtlar ver. "
-    "Sana sunulan CANLI GOOGLE ARAMA BİLGİLERİNİ kullanarak altın fiyatı, hava durumu, haberler, maç sonuçları ve saat sorularına EN GÜNCEL verilerle net cevap ver."
+    "Sana sunulan CANLI BİLGİLERİ doğrudan kullanarak altın, döviz, haber ve hava durumu sorularına %100 GERÇEK VE GÜNCEL rakamlarla cevap ver. "
+    "Asla eski yılların fiyatlarını uydurma."
 )
 
 class User(UserMixin, db.Model):
@@ -60,33 +58,41 @@ def load_user(user_id):
 with app.app_context():
     db.create_all()
 
-def search_google_live(query):
-    """Google'da doğrudan canlı arama yapıp güncel verileri çeker"""
+def get_live_market_data():
+    """Canlı altın ve döviz kurlarını direkt finans servisinden çeker"""
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        encoded_query = urllib.parse.quote(query)
-        url = f"https://www.google.com/search?q={encoded_query}&hl=tr"
-        
-        response = requests.get(url, headers=headers, timeout=6)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            snippets = []
-            # Google arama özetlerini topla
-            for div in soup.find_all(['div', 'span']):
-                text = div.get_text().strip()
-                if len(text) > 40 and not text.startswith("http") and text not in snippets:
-                    snippets.append(text)
-                    if len(snippets) >= 6:
-                        break
-            
-            if snippets:
-                return "\n".join(snippets)
+        url = "https://api.genelpara.com/embed/altin.json"
+        res = requests.get(url, timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            ga = data.get("GA", {})
+            c = data.get("C", {})
+            y = data.get("Y", {})
+            t = data.get("T", {})
+            return (
+                f"CANLI FİNANS VERİLERİ (ANLIK):\n"
+                f"- Gram Altın Alış: {ga.get('alis')} TL | Satış: {ga.get('satis')} TL (Değişim: %{ga.get('degisim')})\n"
+                f"- Çeyrek Altın Alış: {c.get('alis')} TL | Satış: {c.get('satis')} TL\n"
+                f"- Yarım Altın Alış: {y.get('alis')} TL | Satış: {y.get('satis')} TL\n"
+                f"- Tam Altın Alış: {t.get('alis')} TL | Satış: {t.get('satis')} TL"
+            )
     except Exception as e:
-        logging.error(f"Google Arama hatası: {e}")
-    
+        logging.error(f"Finans servisi hatası: {e}")
+    return ""
+
+def search_web_fallback(query):
+    """Genel aramalar için yedek arama servisi"""
+    try:
+        url = f"https://html.duckduckgo.com/html/?q={query}"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        res = requests.get(url, headers=headers, timeout=5)
+        if res.status_code == 200:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(res.text, 'html.parser')
+            results = [a.get_text() for a in soup.find_all('a', class_='result__snippet')[:3]]
+            return "\n".join(results)
+    except Exception:
+        pass
     return ""
 
 @app.route("/")
@@ -161,11 +167,16 @@ def chat():
     api_key = os.environ.get("GROQ_API_KEY", "")
 
     search_context = ""
-    # Görsel yüklenmediyse doğrudan canlı Google araması yap
-    if user_message and not image_base64:
-        live_google_data = search_google_live(user_message)
-        if live_google_data:
-            search_context = f"\n\n[CANLI GOOGLE ARAMA SONUÇLARI]:\n{live_google_data}\n\nLütfen bu canlı Google arama verilerini kullanarak soruya en güncel bilgiyi ver."
+    # Soru altın/döviz ile ilgiliyse direkt anlık borsa verisini çek
+    msg_lower = user_message.lower()
+    if any(k in msg_lower for k in ["altın", "altin", "gram", "çeyrek", "ceyrek", "dolar", "euro"]):
+        live_data = get_live_market_data()
+        if live_data:
+            search_context = f"\n\n[{live_data}]\n\nBu verileri kullanarak kullanıcıya kesin ve net cevap ver."
+    elif user_message and not image_base64:
+        web_data = search_web_fallback(user_message)
+        if web_data:
+            search_context = f"\n\n[İNTERNET ARAMA SONUÇLARI]:\n{web_data}"
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT + search_context}]
     for m in recent_db_messages[:-1]:
@@ -175,7 +186,7 @@ def chat():
     if image_base64:
         model_name = "llama-3.2-11b-vision-preview"
         content_payload = [
-            {"type": "text", "text": user_message if user_message else "Görseli detaylıca incele ve açıkla."},
+            {"type": "text", "text": user_message if user_message else "Görseli incele ve açıkla."},
             {"type": "image_url", "image_url": {"url": image_base64}}
         ]
         messages.append({"role": "user", "content": content_payload})
