@@ -7,14 +7,14 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
+        * { box-sizing: border-box; }
         body {
             background-color: #0f172a;
             color: #f8fafc;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: system-ui, -apple-system, sans-serif;
             height: 100vh;
-            display: flex;
             margin: 0;
-            overflow: hidden;
+            display: flex;
         }
         .sidebar {
             width: 260px;
@@ -22,7 +22,7 @@
             border-right: 1px solid #334155;
             display: flex;
             flex-direction: column;
-            padding: 15px;
+            padding: 20px;
         }
         .main-chat {
             flex: 1;
@@ -36,7 +36,7 @@
             border-bottom: 1px solid #334155;
             display: flex;
             align-items: center;
-            gap: 15px;
+            gap: 10px;
         }
         .chat-box {
             flex: 1;
@@ -44,7 +44,7 @@
             overflow-y: auto;
             display: flex;
             flex-direction: column;
-            gap: 20px;
+            gap: 15px;
         }
         .message-row {
             display: flex;
@@ -56,8 +56,8 @@
             flex-direction: row-reverse;
         }
         .avatar {
-            width: 38px;
-            height: 38px;
+            width: 36px;
+            height: 36px;
             border-radius: 50%;
             display: flex;
             align-items: center;
@@ -72,14 +72,14 @@
             padding: 12px 18px;
             border-radius: 16px;
             font-size: 15px;
-            line-height: 1.6;
+            line-height: 1.5;
             white-space: pre-wrap;
             word-break: break-word;
         }
-        .assistant .bubble { background-color: #1e293b; border: 1px solid #334155; }
+        .assistant .bubble { background-color: #1e293b; border: 1px solid #334155; color: #f8fafc; }
         .user .bubble { background-color: #2563eb; color: white; }
         .input-area {
-            padding: 20px;
+            padding: 15px 25px;
             background-color: #1e293b;
             border-top: 1px solid #334155;
         }
@@ -87,7 +87,7 @@
             background-color: #0f172a;
             border: 1px solid #334155;
             border-radius: 25px;
-            padding: 8px 15px;
+            padding: 6px 15px;
             display: flex;
             align-items: center;
             gap: 10px;
@@ -98,6 +98,7 @@
             color: white;
             outline: none;
             width: 100%;
+            padding: 8px;
         }
         .btn-action {
             background: none;
@@ -105,21 +106,20 @@
             color: #94a3b8;
             font-size: 18px;
             cursor: pointer;
-            transition: color 0.2s;
         }
-        .btn-action:hover { color: #f8fafc; }
         .btn-action.active { color: #22c55e !important; }
         .btn-send {
             background-color: #2563eb;
             color: white;
             border: none;
-            width: 38px;
-            height: 38px;
+            width: 36px;
+            height: 36px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             cursor: pointer;
+            flex-shrink: 0;
         }
     </style>
 </head>
@@ -152,10 +152,10 @@
 
         <div class="input-area">
             <div class="input-container">
-                <button class="btn-action" id="ttsBtn" onclick="toggleTTS()" title="Sesli Okuma (Aç/Kapat)">
+                <button class="btn-action" id="ttsBtn" onclick="toggleTTS()" title="Sesli Okumu Aç/Kapat">
                     <i class="fa-solid fa-volume-high"></i>
                 </button>
-                <input type="text" id="userInput" placeholder="Bir şeyler yazın veya sorun..." onkeydown="if(event.key==='Enter') sendMessage()">
+                <input type="text" id="userInput" placeholder="Bir şeyler yazın..." onkeydown="if(event.key==='Enter') sendMessage()">
                 <button class="btn-send" onclick="sendMessage()"><i class="fa-solid fa-paper-plane"></i></button>
             </div>
         </div>
@@ -172,13 +172,90 @@
                 btn.classList.add('active');
             } else {
                 btn.classList.remove('active');
-                window.speechSynthesis.cancel();
+                if ('speechSynthesis' in window) window.speechSynthesis.cancel();
             }
         }
 
         function speakText(text) {
             if (ttsEnabled && 'speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
-                const utterance =
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.lang = 'tr-TR';
+                window.speechSynthesis.speak(utterance);
+            }
+        }
 
-                
+        async function sendMessage() {
+            const input = document.getElementById('userInput');
+            const message = input.value.trim();
+            if (!message) return;
+
+            const chatBox = document.getElementById('chatBox');
+
+            chatBox.innerHTML += `
+                <div class="message-row user">
+                    <div class="avatar user">S</div>
+                    <div class="bubble">${message}</div>
+                </div>
+            `;
+            input.value = '';
+            chatBox.scrollTop = chatBox.scrollHeight;
+
+            const assistantRow = document.createElement('div');
+            assistantRow.className = 'message-row assistant';
+            assistantRow.innerHTML = `
+                <div class="avatar assistant">Y</div>
+                <div class="bubble">...</div>
+            `;
+            chatBox.appendChild(assistantRow);
+            chatBox.scrollTop = chatBox.scrollHeight;
+
+            const responseBubble = assistantRow.querySelector('.bubble');
+
+            try {
+                const res = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: message, history: chatHistory })
+                });
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let fullText = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.trim()) {
+                            try {
+                                const parsed = JSON.parse(line);
+                                if (parsed.delta) {
+                                    fullText += parsed.delta;
+                                    responseBubble.innerText = fullText;
+                                    chatBox.scrollTop = chatBox.scrollHeight;
+                                }
+                            } catch (e) {}
+                        }
+                    }
+                }
+
+                if (!fullText) {
+                    responseBubble.innerText = 'Yanıt alınamadı, lütfen tekrar deneyin.';
+                } else {
+                    chatHistory.push({ role: 'user', content: message });
+                    chatHistory.push({ role: 'assistant', content: fullText });
+                    speakText(fullText);
+                }
+
+            } catch (err) {
+                responseBubble.innerText = 'Bağlantı hatası oluştu.';
+            }
+        }
+    </script>
+</body>
+</html>
