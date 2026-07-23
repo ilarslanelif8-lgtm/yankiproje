@@ -12,8 +12,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 
-# --- YENİ: eski "google.generativeai" SDK'sı yerine güncel "google-genai" SDK'sı ---
-# (pip install google-genai)  -- eski "google-generativeai" paketi artık deprecated.
+# Güncel google-genai SDK'sı
 from google import genai
 from google.genai import types
 
@@ -37,13 +36,8 @@ MODEL_NAME = "Yankı Hibrit (Gemini + Groq)"
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-# Yeni SDK'da configure() yok; bir Client nesnesi oluşturuluyor.
 gemini_client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
 
-# --- YENİ: Google Search grounding tool'u ---
-# Bu tool açıkken Gemini, cevap vermeden önce gerektiğinde otomatik olarak
-# gerçek zamanlı Google araması yapıyor (haberler, güncel bilgiler, "kim/ne zaman" vs.)
-# Model her mesajda zorla arama yapmıyor; ihtiyaç olduğuna kendisi karar veriyor.
 SEARCH_TOOL = types.Tool(google_search=types.GoogleSearch())
 
 class User(UserMixin, db.Model):
@@ -73,7 +67,7 @@ with app.app_context():
     db.create_all()
 
 def get_live_market_data():
-    """Canlı altın/finans verisi çeker (Google Search'e ek, kesin rakam garantisi için)"""
+    """Canlı altın/finans verisi çeker"""
     try:
         res = requests.get("https://api.genelpara.com/embed/altin.json", timeout=4)
         if res.status_code == 200:
@@ -89,11 +83,7 @@ def get_live_market_data():
     return ""
 
 def clean_thinking_process(text):
-    """
-    Gemini'nin dışarı sızdırdığı iç düşünce süreçlerini ve İngilizce notları temizler.
-    Sadece bilinen iç-düşünce etiketleriyle başlayan satırlar hedefleniyor,
-    gerçek cevap içeriğine (madde işaretli olsa bile) dokunulmuyor.
-    """
+    """Gemini iç düşünce süreçlerini temizler"""
     if not text:
         return ""
     cleaned = re.sub(
@@ -104,18 +94,10 @@ def clean_thinking_process(text):
     )
     return cleaned.strip()
 
-# NOT: Kaynakça (grounding sources) listesi kullanıcı isteğiyle tamamen kaldırıldı.
-# format_grounding_sources fonksiyonu ve çağrıları silindi; Gemini'nin arama
-# sırasında kullandığı linkler artık cevaba eklenmiyor.
-
 CODE_BLOCK_RE = re.compile(r"```(\w+)?\n(.*?)```", re.DOTALL)
 
 def extract_code_blocks(text):
-    """
-    Cevap içindeki ```dil ... ``` kod bloklarını ayıklar.
-    Frontend bunu kullanarak (örn. html/js/game içerikli bloklar) yan panelde
-    canlı önizleme açabilir. Metin değişmeden kalır; bu sadece ek bir liste döner.
-    """
+    """Cevap içindeki kod bloklarını ayıklar"""
     blocks = []
     for match in CODE_BLOCK_RE.finditer(text or ""):
         lang = (match.group(1) or "").lower().strip()
@@ -126,14 +108,9 @@ def extract_code_blocks(text):
 CODE_SYSTEM_HINT = (
     "\n\nKod yazman istendiğinde: eksiksiz, hatasız, doğrudan çalışabilir kod üret. "
     "HTML/JS/oyun gibi tarayıcıda çalışabilecek şeyler istendiğinde bunu TEK bir "
-    "```html``` bloğu içinde, tüm CSS ve JS aynı dosyada olacak şekilde, dışarıdan "
-    "hiçbir dosyaya bağımlı olmadan yaz ki doğrudan bir iframe içinde çalıştırılabilsin. "
-    "Kodu parçalara bölme, açıklamaları kod bloğunun dışına yaz, kod bloğunun içine "
-    "yorum dışında gereksiz metin koyma."
+    "```html``` bloğu içinde, tüm CSS ve JS aynı dosyada olacak şekilde yaz."
 )
 
-# Arama toolunu her mesajda zorla açmak gecikme yaratıyordu; sadece güncel/gerçek
-# zamanlı bilgi gerektiren mesajlarda devreye alıyoruz.
 SEARCH_TRIGGER_WORDS = [
     "altın", "altin", "dolar", "euro", "fiyat", "kaç para", "borsa", "kur",
     "ezan", "namaz", "hava durumu", "haber", "güncel", "bugün", "yarın",
@@ -214,21 +191,13 @@ def chat():
     msg_lower = user_message.lower()
     needs_live_data = any(k in msg_lower for k in ["altın", "altin", "gram", "çeyrek", "fiyat", "dolar", "euro"])
 
-    # --- DEĞİŞTİ: Artık "genel web araması" istendiği için, Gemini key varsa
-    # HER metin mesajı Gemini + Google Search ile işleniyor. Model kendi karar
-    # veriyor gerçekten arama yapıp yapmayacağına (her mesajda zorla aramıyor,
-    # sadece gerektiğinde). Gemini key yoksa Groq'a (aramasız) düşüyoruz.
-    use_gemini = bool(GEMINI_KEY) and (bool(image_base64) or True)
+    use_gemini = bool(GEMINI_KEY) and bool(gemini_client)
 
     def generate():
+        nonlocal use_gemini
         full_reply = ""
 
         if use_gemini:
-            if not gemini_client:
-                yield json.dumps({"delta": "GEMINI_API_KEY bulunamadı."}, ensure_ascii=False) + "\n"
-                yield json.dumps({"done": True}) + "\n"
-                return
-
             prompt_text = user_message + CODE_SYSTEM_HINT
             if needs_live_data:
                 live_info = get_live_market_data()
@@ -243,29 +212,18 @@ def chat():
                 pil_img = Image.open(BytesIO(img_data))
                 contents.append(pil_img)
 
-            # HIZ: Modelleri artık her istekte ağdan (models.list()) çekmiyoruz —
-            # bu her mesaja gereksiz bir tam ekstra API çağrısı ekliyordu.
-            # En hızlı modelden başlayan sabit, güncel bir liste kullanılıyor.
             candidate_models = [
-                "gemini-2.5-flash-lite",
                 "gemini-2.5-flash",
-                "gemini-2.0-flash",
+                "gemini-2.0-flash"
             ]
 
-            # HIZ: Arama tool'u sadece gerçekten güncel bilgi gerektiren mesajlarda
-            # açılıyor. Her mesajda zorla arama yapmak (ör. "merhaba" gibi basit
-            # mesajlarda bile) gözle görülür gecikme yaratıyordu.
             tools = [SEARCH_TOOL] if needs_search(msg_lower) else []
             config = types.GenerateContentConfig(tools=tools)
 
             success = False
-            last_err = ""
 
             for m_name in candidate_models:
                 try:
-                    # Gerçek streaming: her parça geldiği anda kullanıcıya akıtılıyor —
-                    # eskisi gibi tüm cevap bitene kadar beklenmiyor. Bu, ilk kelimenin
-                    # ekrana düşme süresini büyük ölçüde kısaltıyor.
                     stream = gemini_client.models.generate_content_stream(
                         model=m_name,
                         contents=contents,
@@ -278,8 +236,6 @@ def chat():
                             yield json.dumps({"delta": chunk.text}, ensure_ascii=False) + "\n"
 
                     if raw_text:
-                        # Kaydetmeden önce olası iç-düşünce sızıntılarını temizle,
-                        # kod bloklarını çıkar (frontend yan panelde kullanabilir).
                         full_reply = clean_thinking_process(raw_text)
                         code_blocks = extract_code_blocks(full_reply)
                         if code_blocks:
@@ -288,15 +244,20 @@ def chat():
                     success = True
                     break
                 except Exception as e:
-                    last_err = str(e)
+                    err_msg = str(e)
+                    logging.warning(f"Gemini Hata aldı ({m_name}): {err_msg}")
+                    if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg or "404" in err_msg:
+                        # Kota veya model bulunamadı hatasında diğer Gemini modellerini denemeden Groq'a geç
+                        break
                     continue
 
             if not success:
-                yield json.dumps({"delta": f"Gemini Bağlantı Hatası: {last_err}"}, ensure_ascii=False) + "\n"
+                use_gemini = False
 
-        else:
+        # Gemini başarısız olduysa veya kotası bittiyse Groq devreye girer
+        if not use_gemini:
             if not GROQ_KEY:
-                yield json.dumps({"delta": "GROQ_API_KEY bulunamadı."}, ensure_ascii=False) + "\n"
+                yield json.dumps({"delta": "Servis şu an aşırı yoğun, lütfen biraz sonra tekrar deneyin."}, ensure_ascii=False) + "\n"
                 yield json.dumps({"done": True}) + "\n"
                 return
 
@@ -338,10 +299,10 @@ def chat():
                                 except Exception:
                                     continue
                 else:
-                    yield json.dumps({"delta": f"Groq Hatası (Kod: {res.status_code})"}, ensure_ascii=False) + "\n"
+                    yield json.dumps({"delta": "Yanıt üretilemedi, lütfen tekrar deneyin."}, ensure_ascii=False) + "\n"
 
             except Exception as e:
-                yield json.dumps({"delta": f"Groq Bağlantı Hatası: {str(e)}"}, ensure_ascii=False) + "\n"
+                yield json.dumps({"delta": f"Bağlantı Hatası: {str(e)}"}, ensure_ascii=False) + "\n"
 
         if full_reply:
             with app.app_context():
