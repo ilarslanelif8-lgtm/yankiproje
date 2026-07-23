@@ -357,14 +357,17 @@ def chat():
 
             contents = [prompt_text]
 
-            if image_base64 and "," in image_base64:
-                _, encoded = image_base64.split(",", 1)
-                img_data = base64.b64decode(encoded)
-                pil_img = Image.open(BytesIO(img_data))
-                contents.append(pil_img)
+            try:
+                if image_base64 and "," in image_base64:
+                    _, encoded = image_base64.split(",", 1)
+                    img_data = base64.b64decode(encoded)
+                    pil_img = Image.open(BytesIO(img_data))
+                    contents.append(pil_img)
 
-            if file_part is not None:
-                contents.append(file_part)
+                if file_part is not None:
+                    contents.append(file_part)
+            except Exception as e:
+                logging.warning(f"Görsel/dosya Gemini içeriğine eklenemedi: {e}")
 
             # Hesabındaki aktif Google Gemini modellerini dinamik çekmeye çalışıyoruz:
             candidate_models = []
@@ -397,14 +400,23 @@ def chat():
                         config=config,
                     )
 
-                    if response.text:
+                    try:
                         raw_text = response.text
-                        clean_text = clean_thinking_process(raw_text)
+                    except Exception:
+                        raw_text = None
+
+                    clean_text = clean_thinking_process(raw_text) if raw_text else ""
+
+                    if clean_text:
                         full_reply = clean_text
                         yield json.dumps({"delta": clean_text}, ensure_ascii=False) + "\n"
-
-                    success = True
-                    break
+                        success = True
+                        break
+                    else:
+                        # Model boş/engellenmiş bir yanıt döndürdü (ör. güvenlik filtresi
+                        # tetiklendi). Bunu BAŞARI saymıyoruz, bir sonraki modeli deniyoruz.
+                        last_err = "Model boş yanıt döndürdü (muhtemelen içerik filtresi)."
+                        continue
                 except Exception as e:
                     last_err = str(e)
                     # 429 / quota / RESOURCE_EXHAUSTED gördüysek bu modeli boşver,
