@@ -385,10 +385,47 @@
             }
         }
 
+        function sanitizeForSpeech(text) {
+            let clean = text;
+
+            // Kod bloklarını ve satır içi kodu sadeleştir
+            clean = clean.replace(/```[\s\S]*?```/g, ' kod bloğu. ');
+            clean = clean.replace(/`([^`]+)`/g, '$1');
+
+            // Markdown linkleri: [metin](url) -> sadece metin
+            clean = clean.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+
+            // Kalın / italik işaretleri (***, **, *, __, _)
+            clean = clean.replace(/\*\*\*(.+?)\*\*\*/g, '$1');
+            clean = clean.replace(/\*\*(.+?)\*\*/g, '$1');
+            clean = clean.replace(/\*(.+?)\*/g, '$1');
+            clean = clean.replace(/__(.+?)__/g, '$1');
+            clean = clean.replace(/_(.+?)_/g, '$1');
+
+            // Başlık işaretleri (#, ##, ### ...)
+            clean = clean.replace(/^#{1,6}\s*/gm, '');
+
+            // Satır başı madde işaretleri (*, -, •)
+            clean = clean.replace(/^[\*\-•]\s+/gm, '');
+
+            // Yatay çizgiler ve tablo çubukları
+            clean = clean.replace(/^-{3,}$/gm, '');
+            clean = clean.replace(/\|/g, ' ');
+
+            // Emojiler ve şekil/sembol karakterleri (TTS bunları isimleriyle okuyor)
+            clean = clean.replace(/[\u{1F1E6}-\u{1F1FF}\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\uFE0F\u200D]/gu, '');
+
+            // Fazla boşluk/satır boşluklarını sadeleştir
+            clean = clean.replace(/[ \t]{2,}/g, ' ').replace(/\n{2,}/g, '. ').trim();
+
+            return clean;
+        }
+
         function speakText(text) {
             if (ttsEnabled && 'speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
-                let cleanText = text.replace(/```[\s\S]*?```/g, "kod bloğu.").replace(/`([^`]+)`/g, "$1");
+                const cleanText = sanitizeForSpeech(text);
+                if (!cleanText) return;
                 const utterance = new SpeechSynthesisUtterance(cleanText);
                 utterance.lang = 'tr-TR';
                 if (femaleVoice) {
