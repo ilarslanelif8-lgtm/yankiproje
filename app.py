@@ -82,7 +82,6 @@ def clean_thinking_process(text):
     """Gemini'nin dışarı sızdırdığı iç düşünce süreçlerini ve İngilizce notları temizler."""
     if not text:
         return ""
-    # İç düşünce aşamalarını içeren satırları temizle
     cleaned = re.sub(r'(\*|\-)?\s*(User question|Context|Persona constraints|Persona|Step \d|Drafting|Greeting|Self-Correction).*?\n', '', text, flags=re.IGNORECASE)
     cleaned = re.sub(r'\* .*?\n', '', cleaned)
     return cleaned.strip()
@@ -193,13 +192,11 @@ def chat():
 
             for m_name in candidate_models:
                 try:
-                    # System instruction olmadan sade çağrı yapıyoruz
                     model = genai.GenerativeModel(m_name)
                     response = model.generate_content(contents, stream=False)
                     
                     if response.text:
                         raw_text = response.text
-                        # İç düşünce sızıntısını temizle
                         clean_text = clean_thinking_process(raw_text)
                         full_reply = clean_text
                         yield json.dumps({"delta": clean_text}, ensure_ascii=False) + "\n"
@@ -254,7 +251,6 @@ def chat():
                                     if chunk:
                                         full_reply += chunk
                                         yield json.dumps({"delta": chunk}, ensure_ascii=False) + "\n"
-                                meks:
                                 except Exception:
                                     continue
                 else:
@@ -275,4 +271,3 @@ def chat():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-    
