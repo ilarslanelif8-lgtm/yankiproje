@@ -5,3 +5,4 @@ gunicorn
 requests
 googlesearch-python
 beautifulsoup4
+google-generativeai
