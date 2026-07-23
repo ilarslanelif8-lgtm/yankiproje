@@ -84,16 +84,29 @@ def get_live_market_data():
                 f"Gram Altın Alış: {ga.get('alis')} TL, Satış: {ga.get('satis')} TL | "
                 f"Çeyrek Altın Alış: {c.get('alis')} TL, Satış: {c.get('satis')} TL"
             )
-    except Exception:
-        pass
+    except Exception as e:
+        logging.warning(f"Canlı piyasa verisi çekilemedi: {e}")
     return ""
 
 def clean_thinking_process(text):
-    """Gemini'nin dışarı sızdırdığı iç düşünce süreçlerini ve İngilizce notları temizler."""
+    """
+    Gemini'nin dışarı sızdırdığı iç düşünce süreçlerini ve İngilizce notları temizler.
+
+    NOT: Önceki sürümde `r'\* .*?\n'` deseni TÜM madde işaretli ("* ...") satırları
+    siliyordu. Bu sadece sızan iç-düşünce notlarını değil, Gemini'nin madde
+    işaretiyle verdiği gerçek cevap içeriğini (ör. "* Gram Altın: 4200 TL") de
+    yok ediyordu — ekrandaki "kaynaklar var ama fiyatlar yok" hatasının sebebi buydu.
+    Bu yüzden o kör satır tamamen kaldırıldı; sadece bilinen iç-düşünce
+    etiketleriyle başlayan satırlar hedefleniyor.
+    """
     if not text:
         return ""
-    cleaned = re.sub(r'(\*|\-)?\s*(User question|Context|Persona constraints|Persona|Step \d|Drafting|Greeting|Self-Correction).*?\n', '', text, flags=re.IGNORECASE)
-    cleaned = re.sub(r'\* .*?\n', '', cleaned)
+    cleaned = re.sub(
+        r'^[\*\-]?\s*(User question|Context|Persona constraints|Persona|Step \d+|Drafting|Greeting|Self-Correction)\s*:.*?\n',
+        '',
+        text,
+        flags=re.IGNORECASE | re.MULTILINE
+    )
     return cleaned.strip()
 
 def format_grounding_sources(response):
@@ -325,4 +338,3 @@ def chat():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
