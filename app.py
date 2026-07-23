@@ -3,6 +3,7 @@ import json
 import logging
 import requests
 import base64
+import re
 from io import BytesIO
 from PIL import Image
 from datetime import datetime
@@ -28,12 +29,6 @@ login_manager.login_view = 'login'
 
 ASSISTANT_NAME = "Yankı"
 MODEL_NAME = "Yankı Hibrit (Gemini + Groq)"
-
-SYSTEM_PROMPT = (
-    "Sen Yankı adında yardımcı, kibar ve Türkçe konuşan bir yapay zeka asistansın. "
-    "Kesinlikle düşünce adımlarını, iç planlamanı, İngilizce yönlendirmeleri veya sistem notlarını yanıta dahil etme. "
-    "Sadece kullanıcının sorusuna doğrudan, temiz ve net Türkçe yanıt ver."
-)
 
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
@@ -75,13 +70,22 @@ def get_live_market_data():
             data = res.json()
             ga, c = data.get("GA", {}), data.get("C", {})
             return (
-                f"\n[CANLI BİLGİ - GÜNCEL FİYATLAR]: "
+                f"\n[CANLI PİYASA FİYATLARI]: "
                 f"Gram Altın Alış: {ga.get('alis')} TL, Satış: {ga.get('satis')} TL | "
                 f"Çeyrek Altın Alış: {c.get('alis')} TL, Satış: {c.get('satis')} TL"
             )
     except Exception:
         pass
     return ""
+
+def clean_thinking_process(text):
+    """Gemini'nin dışarı sızdırdığı iç düşünce süreçlerini ve İngilizce notları temizler."""
+    if not text:
+        return ""
+    # İç düşünce aşamalarını içeren satırları temizle
+    cleaned = re.sub(r'(\*|\-)?\s*(User question|Context|Persona constraints|Persona|Step \d|Drafting|Greeting|Self-Correction).*?\n', '', text, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\* .*?\n', '', cleaned)
+    return cleaned.strip()
 
 @app.route("/")
 @login_required
@@ -167,14 +171,14 @@ def chat():
                 yield json.dumps({"done": True}) + "\n"
                 return
 
-            # Talimatı ve canlı veriyi doğrudan mesaj metnine dahil ederek sistem sızıntısını engelliyoruz
-            prompt_text = f"Sistem Kuralı: {SYSTEM_PROMPT}\n\nKullanıcı Mesajı: {user_message}"
+            contents = []
+            prompt_text = user_message
             if needs_live_data:
                 live_info = get_live_market_data()
                 if live_info:
-                    prompt_text += f"\n{live_info}"
+                    prompt_text += live_info
 
-            contents = [prompt_text]
+            contents.append(prompt_text)
 
             if image_base64 and "," in image_base64:
                 _, encoded = image_base64.split(",", 1)
@@ -182,27 +186,23 @@ def chat():
                 pil_img = Image.open(BytesIO(img_data))
                 contents.append(pil_img)
 
-            candidate_models = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-2.0-flash", "gemini-1.5-pro"]
+            candidate_models = ["gemini-1.5-flash", "gemini-1.5-pro"]
             
-            try:
-                available_from_api = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-                if available_from_api:
-                    candidate_models = available_from_api + candidate_models
-            except Exception:
-                pass
-
             success = False
             last_err = ""
 
             for m_name in candidate_models:
                 try:
+                    # System instruction olmadan sade çağrı yapıyoruz
                     model = genai.GenerativeModel(m_name)
-                    response = model.generate_content(contents, stream=True)
+                    response = model.generate_content(contents, stream=False)
                     
-                    for chunk in response:
-                        if chunk.text:
-                            full_reply += chunk.text
-                            yield json.dumps({"delta": chunk.text}, ensure_ascii=False) + "\n"
+                    if response.text:
+                        raw_text = response.text
+                        # İç düşünce sızıntısını temizle
+                        clean_text = clean_thinking_process(raw_text)
+                        full_reply = clean_text
+                        yield json.dumps({"delta": clean_text}, ensure_ascii=False) + "\n"
                     
                     success = True
                     break
@@ -223,7 +223,7 @@ def chat():
                 recent_msgs = ChatMessage.query.filter_by(user_id=current_user.id).order_by(ChatMessage.timestamp.desc()).limit(6).all()
                 recent_msgs.reverse()
 
-                messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+                messages = [{"role": "system", "content": "Sen 'Yankı' adında Türkçe konuşan zeki ve kibar bir asistansın."}]
                 for m in recent_msgs[:-1]:
                     if m.content:
                         messages.append({"role": m.role, "content": m.content})
@@ -254,6 +254,7 @@ def chat():
                                     if chunk:
                                         full_reply += chunk
                                         yield json.dumps({"delta": chunk}, ensure_ascii=False) + "\n"
+                                meks:
                                 except Exception:
                                     continue
                 else:
@@ -274,3 +275,4 @@ def chat():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+    
