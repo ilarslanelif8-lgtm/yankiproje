@@ -322,9 +322,8 @@ def chat():
                     if response.text:
                         raw_text = response.text
                         clean_text = clean_thinking_process(raw_text)
-                        sources = format_grounding_sources(response)
-                        full_reply = clean_text + sources
-                        yield json.dumps({"delta": clean_text + sources}, ensure_ascii=False) + "\n"
+                        full_reply = clean_text
+                        yield json.dumps({"delta": clean_text}, ensure_ascii=False) + "\n"
 
                     success = True
                     break
