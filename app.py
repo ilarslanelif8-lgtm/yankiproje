@@ -29,7 +29,11 @@ login_manager.login_view = 'login'
 ASSISTANT_NAME = "Yankı"
 MODEL_NAME = "Yankı Hibrit (Gemini + Groq)"
 
-SYSTEM_PROMPT = "Sen Yankı adında yardımcı, kibar ve Türkçe konuşan zeki bir yapay zeka asistansın. Kullanıcının sorularına doğrudan ve net cevap ver."
+SYSTEM_PROMPT = (
+    "Sen Yankı adında yardımcı, kibar ve Türkçe konuşan bir yapay zeka asistansın. "
+    "Kesinlikle düşünce adımlarını, iç planlamanı, İngilizce yönlendirmeleri veya sistem notlarını yanıta dahil etme. "
+    "Sadece kullanıcının sorusuna doğrudan, temiz ve net Türkçe yanıt ver."
+)
 
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
@@ -163,25 +167,20 @@ def chat():
                 yield json.dumps({"done": True}) + "\n"
                 return
 
-            contents = []
+            # Talimatı ve canlı veriyi doğrudan mesaj metnine dahil ederek sistem sızıntısını engelliyoruz
+            prompt_text = f"Sistem Kuralı: {SYSTEM_PROMPT}\n\nKullanıcı Mesajı: {user_message}"
             if needs_live_data:
                 live_info = get_live_market_data()
                 if live_info:
-                    user_message_with_data = user_message + live_info
-                    contents.append(user_message_with_data)
-                else:
-                    contents.append(user_message)
-            elif user_message:
-                contents.append(user_message)
+                    prompt_text += f"\n{live_info}"
+
+            contents = [prompt_text]
 
             if image_base64 and "," in image_base64:
                 _, encoded = image_base64.split(",", 1)
                 img_data = base64.b64decode(encoded)
                 pil_img = Image.open(BytesIO(img_data))
                 contents.append(pil_img)
-
-            if not contents and image_base64:
-                contents.append("Görseli detaylıca incele ve açıkla.")
 
             candidate_models = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-2.0-flash", "gemini-1.5-pro"]
             
@@ -197,7 +196,7 @@ def chat():
 
             for m_name in candidate_models:
                 try:
-                    model = genai.GenerativeModel(m_name, system_instruction=SYSTEM_PROMPT)
+                    model = genai.GenerativeModel(m_name)
                     response = model.generate_content(contents, stream=True)
                     
                     for chunk in response:
