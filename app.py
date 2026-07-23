@@ -185,8 +185,24 @@ def chat():
                 pil_img = Image.open(BytesIO(img_data))
                 contents.append(pil_img)
 
-            candidate_models = ["gemini-1.5-flash", "gemini-1.5-pro"]
-            
+            # Hesabındaki aktif Google Gemini modellerini dinamik çekiyoruz:
+            candidate_models = []
+            try:
+                for m in genai.list_models():
+                    if 'generateContent' in m.supported_generation_methods:
+                        candidate_models.append(m.name)
+            except Exception:
+                pass
+
+            # Eğer dinamik çekilemezse alternatif model isimleri:
+            if not candidate_models:
+                candidate_models = [
+                    "gemini-2.5-flash", 
+                    "gemini-2.0-flash", 
+                    "models/gemini-1.5-flash", 
+                    "models/gemini-1.5-pro"
+                ]
+
             success = False
             last_err = ""
 
