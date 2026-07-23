@@ -102,6 +102,34 @@ def login():
         flash("E-posta veya şifre hatalı!", "danger")
     return render_template("login.html")
 
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "").strip()
+        
+        if not email or not password:
+            flash("Lütfen tüm alanları doldurun!", "warning")
+            return redirect(url_for('register'))
+
+        existing_user = User.query.filter_by(email=email).first()
+        if existing_user:
+            flash("Bu e-posta adresi zaten kayıtlı!", "danger")
+            return redirect(url_for('register'))
+
+        new_user = User(email=email)
+        new_user.set_password(password)
+        db.session.add(new_user)
+        db.session.commit()
+
+        login_user(new_user, remember=True)
+        flash("Hesabınız başarıyla oluşturuldu!", "success")
+        return redirect(url_for('index'))
+
+    return render_template("register.html")
+
 @app.route("/logout")
 @login_required
 def logout():
@@ -125,7 +153,6 @@ def chat():
     msg_lower = user_message.lower()
     needs_live_data = any(k in msg_lower for k in ["altın", "altin", "gram", "çeyrek", "fiyat", "dolar", "euro"])
 
-    # Görev Dağılımı (Routing Logic)
     use_gemini = False
     if image_base64 or needs_live_data:
         use_gemini = True
@@ -133,7 +160,6 @@ def chat():
     def generate():
         full_reply = ""
         
-        # 🟢 GÖRSEL VEYA CANLI BİLGİ -> GEMINI
         if use_gemini:
             if not GEMINI_KEY:
                 yield json.dumps({"delta": "GEMINI_API_KEY bulunamadı."}, ensure_ascii=False) + "\n"
@@ -172,7 +198,6 @@ def chat():
             except Exception as e:
                 yield json.dumps({"delta": f"Gemini Hatası: {str(e)}"}, ensure_ascii=False) + "\n"
 
-        # 🔵 KOD YAZMA VE NORMAL SOHBET -> GROQ (Llama 3.3 70B)
         else:
             if not GROQ_KEY:
                 yield json.dumps({"delta": "GROQ_API_KEY bulunamadı."}, ensure_ascii=False) + "\n"
@@ -214,7 +239,7 @@ def chat():
                                     if chunk:
                                         full_reply += chunk
                                         yield json.dumps({"delta": chunk}, ensure_ascii=False) + "\n"
-                                except Exception:
+                                meks:
                                     continue
                 else:
                     yield json.dumps({"delta": f"Groq Hatası (Kod: {res.status_code})"}, ensure_ascii=False) + "\n"
@@ -222,7 +247,6 @@ def chat():
             except Exception as e:
                 yield json.dumps({"delta": f"Groq Bağlantı Hatası: {str(e)}"}, ensure_ascii=False) + "\n"
 
-        # Yanıtı veritabanına kaydet
         if full_reply:
             with app.app_context():
                 assistant_msg = ChatMessage(user_id=current_user.id, role="assistant", content=full_reply)
