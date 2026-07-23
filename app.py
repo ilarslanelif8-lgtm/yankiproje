@@ -29,10 +29,7 @@ login_manager.login_view = 'login'
 ASSISTANT_NAME = "Yankı"
 MODEL_NAME = "Yankı Hibrit (Gemini + Groq)"
 
-SYSTEM_PROMPT = (
-    "Sen 'Yankı' adında son derece zeki, yetenekli ve Türkçe konuşan bir yapay zeka asistansın.\n"
-    "Sorulara net, doğru ve yapıcı yanıtlar ver."
-)
+SYSTEM_PROMPT = "Sen Yankı adında yardımcı, kibar ve Türkçe konuşan zeki bir yapay zeka asistansın. Kullanıcının sorularına doğrudan ve net cevap ver."
 
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
@@ -186,10 +183,8 @@ def chat():
             if not contents and image_base64:
                 contents.append("Görseli detaylıca incele ve açıkla.")
 
-            # Otomatik model tespit ve yedekli deneme mekanizması
             candidate_models = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-2.0-flash", "gemini-1.5-pro"]
             
-            # API hesabından aktif modelleri çekmeye çalış
             try:
                 available_from_api = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
                 if available_from_api:
@@ -211,7 +206,7 @@ def chat():
                             yield json.dumps({"delta": chunk.text}, ensure_ascii=False) + "\n"
                     
                     success = True
-                    break  # Başarılı çalıştığında döngüden çık
+                    break
                 except Exception as e:
                     last_err = str(e)
                     continue
