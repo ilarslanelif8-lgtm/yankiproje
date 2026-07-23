@@ -122,6 +122,70 @@
             display: block;
         }
 
+        .file-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #0f172a;
+            border: 1px solid #475569;
+            color: #93c5fd;
+            padding: 6px 12px;
+            border-radius: 10px;
+            font-size: 13px;
+            margin-bottom: 8px;
+        }
+
+        .preview-toggle-btn {
+            background: #4f46e5;
+            color: white;
+            border: none;
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            cursor: pointer;
+            margin-top: 10px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .preview-toggle-btn:hover { background: #4338ca; }
+
+        .preview-frame {
+            display: none;
+            width: 100%;
+            height: 420px;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            margin-top: 10px;
+            background: white;
+        }
+
+        .file-preview-container {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            background: #0f172a;
+            border: 1px solid #475569;
+            border-radius: 8px;
+            padding: 6px 12px;
+            margin-bottom: 8px;
+            font-size: 13px;
+            color: #93c5fd;
+            width: fit-content;
+        }
+        .file-preview-container .btn-close-file {
+            background: #ef4444;
+            color: white;
+            border-radius: 50%;
+            width: 16px;
+            height: 16px;
+            font-size: 9px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+
         .input-area {
             padding: 12px 20px;
             background-color: #1e293b;
@@ -214,7 +278,10 @@
             <i class="fa-solid fa-plus me-2"></i> Yenile / Başlat
         </button>
         <div class="mt-auto pt-3 border-top border-secondary">
-            <small class="text-muted d-block mb-2"><i class="fa-solid fa-user me-1"></i> {{ user.email }}</small>
+            <small class="text-muted d-block mb-2">
+                <i class="fa-solid fa-user me-1"></i> {{ user.email }}
+                {% if is_founder %}<span class="badge bg-warning text-dark ms-1"><i class="fa-solid fa-crown"></i> Kurucu</span>{% endif %}
+            </small>
             <a href="/logout" class="btn btn-sm btn-outline-danger w-100"><i class="fa-solid fa-right-from-bracket"></i> Çıkış Yap</a>
         </div>
     </div>
@@ -224,6 +291,8 @@
             <span class="badge bg-secondary p-2"><i class="fa-solid fa-bolt"></i> Hızlı Sunucu</span>
             <span class="badge bg-primary p-2"><i class="fa-solid fa-globe"></i> İnternet Erişimi Aktif</span>
             <span class="badge bg-success p-2"><i class="fa-solid fa-eye"></i> Görsel Analizi Aktif</span>
+            <span class="badge bg-info text-dark p-2"><i class="fa-solid fa-file-lines"></i> Dosya Analizi Aktif</span>
+            {% if is_founder %}<span class="badge bg-warning text-dark p-2"><i class="fa-solid fa-crown"></i> Kurucu Modu</span>{% endif %}
         </div>
 
         <div class="chat-box" id="chatBox">
@@ -238,6 +307,7 @@
                         <div class="avatar user">S</div>
                         <div class="bubble">
                             {% if msg.image_url %}<img src="{{ msg.image_url }}">{% endif %}
+                            {% if msg.file_name %}<div class="file-chip">{{ msg.file_name }}</div>{% endif %}
                             {% if msg.content %}<div>{{ msg.content }}</div>{% endif %}
                         </div>
                     </div>
@@ -255,17 +325,27 @@
                 <img id="imgPreview" src="" alt="Yüklenen Görsel">
                 <div class="btn-close-img" onclick="removeImage()">✕</div>
             </div>
+            <div class="file-preview-container" id="filePreviewBox">
+                <i class="fa-solid fa-file-lines"></i>
+                <span id="fileNameLabel"></span>
+                <div class="btn-close-file" onclick="removeFile()">✕</div>
+            </div>
             <div class="input-container">
                 <button class="btn-action" id="ttsBtn" onclick="toggleTTS()" title="Sesli Okumayı Aç/Kapat">
                     <i class="fa-solid fa-volume-high"></i>
                 </button>
-                
+
                 <button class="btn-action" onclick="document.getElementById('imageInput').click()" title="Görsel Yükle">
                     <i class="fa-solid fa-paperclip"></i>
                 </button>
                 <input type="file" id="imageInput" accept="image/*" style="display: none;" onchange="handleImageUpload(event)">
 
-                <input type="text" id="userInput" placeholder="Bir şeyler yazın veya görsel yükleyin..." onkeydown="if(event.key==='Enter') sendMessage()">
+                <button class="btn-action" onclick="document.getElementById('fileInput').click()" title="Dosya Yükle (.txt, .csv, .json, .md, .pdf)">
+                    <i class="fa-solid fa-file-arrow-up"></i>
+                </button>
+                <input type="file" id="fileInput" accept=".txt,.csv,.json,.md,.log,.pdf" style="display: none;" onchange="handleFileUpload(event)">
+
+                <input type="text" id="userInput" placeholder="Bir şeyler yazın, görsel veya dosya yükleyin..." onkeydown="if(event.key==='Enter') sendMessage()">
                 <button class="btn-send" onclick="sendMessage()"><i class="fa-solid fa-paper-plane"></i></button>
             </div>
         </div>
@@ -274,6 +354,7 @@
     <script>
         let ttsEnabled = false;
         let selectedBase64Image = null;
+        let selectedFile = null; // { name, mime, data }
         let femaleVoice = null;
 
         const chatBox = document.getElementById('chatBox');
@@ -371,17 +452,80 @@
             document.getElementById('imgPreviewBox').style.display = 'none';
         }
 
+        function handleFileUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const maxBytes = 8 * 1024 * 1024; // 8MB sınırı
+            if (file.size > maxBytes) {
+                alert('Dosya çok büyük (maks. 8MB).');
+                e.target.value = '';
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function (evt) {
+                selectedFile = {
+                    name: file.name,
+                    mime: file.type || 'application/octet-stream',
+                    data: evt.target.result
+                };
+                document.getElementById('fileNameLabel').innerText = file.name;
+                document.getElementById('filePreviewBox').style.display = 'inline-flex';
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function removeFile() {
+            selectedFile = null;
+            document.getElementById('fileInput').value = '';
+            document.getElementById('filePreviewBox').style.display = 'none';
+        }
+
+        function extractRunnableCode(text) {
+            // Metindeki ilk çalıştırılabilir görünen kod bloğunu bulur (html/oyun önizlemesi için)
+            const match = text.match(/```(?:html|game)?\s*\n?([\s\S]*?)```/i);
+            if (!match) return null;
+            const code = match[1].trim();
+            if (/<html|<body|<canvas|<script|<!DOCTYPE/i.test(code)) {
+                return code;
+            }
+            return null;
+        }
+
+        function attachLivePreview(container, code) {
+            const btn = document.createElement('button');
+            btn.className = 'preview-toggle-btn';
+            btn.innerHTML = '<i class="fa-solid fa-play"></i> Canlı Önizleme / Test Et';
+
+            const iframe = document.createElement('iframe');
+            iframe.className = 'preview-frame';
+            iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-pointer-lock allow-modals');
+            iframe.srcdoc = code;
+
+            btn.onclick = function () {
+                iframe.style.display = iframe.style.display === 'none' ? 'block' : 'none';
+            };
+
+            container.appendChild(btn);
+            container.appendChild(iframe);
+        }
+
         async function sendMessage() {
             const input = document.getElementById('userInput');
             const message = input.value.trim();
             
-            if (!message && !selectedBase64Image) return;
+            if (!message && !selectedBase64Image && !selectedFile) return;
 
             const imgToSend = selectedBase64Image;
+            const fileToSend = selectedFile;
 
             let userContentHtml = '';
             if (imgToSend) {
                 userContentHtml += `<img src="${imgToSend}">`;
+            }
+            if (fileToSend) {
+                userContentHtml += `<div class="file-chip"><i class="fa-solid fa-file-lines"></i> ${fileToSend.name}</div>`;
             }
             if (message) {
                 userContentHtml += `<div>${message}</div>`;
@@ -396,6 +540,7 @@
 
             input.value = '';
             removeImage();
+            removeFile();
             chatBox.scrollTop = chatBox.scrollHeight;
 
             const assistantRow = document.createElement('div');
@@ -413,7 +558,7 @@
                 const res = await fetch('/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: message, image: imgToSend })
+                    body: JSON.stringify({ message: message, image: imgToSend, file: fileToSend })
                 });
 
                 const reader = res.body.getReader();
@@ -445,6 +590,10 @@
                     responseBubble.innerText = 'Yanıt alınamadı, lütfen tekrar deneyin.';
                 } else {
                     speakText(fullText);
+                    const runnableCode = extractRunnableCode(fullText);
+                    if (runnableCode) {
+                        attachLivePreview(responseBubble, runnableCode);
+                    }
                 }
 
             } catch (err) {
