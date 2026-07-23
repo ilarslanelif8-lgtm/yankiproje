@@ -6,3 +6,9 @@ requests
 googlesearch-python
 beautifulsoup4
 google-generativeai
+Flask
+Flask-SQLAlchemy
+Flask-Login
+requests
+Pillow
+google-generativeai
