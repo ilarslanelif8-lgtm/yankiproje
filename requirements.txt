@@ -3,12 +3,5 @@ Flask-SQLAlchemy==3.1.1
 Flask-Login==0.6.3
 gunicorn
 requests
-googlesearch-python
-beautifulsoup4
-google-generativeai
-Flask
-Flask-SQLAlchemy
-Flask-Login
-requests
 Pillow
 google-generativeai
