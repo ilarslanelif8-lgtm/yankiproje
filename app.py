@@ -239,7 +239,7 @@ def chat():
                                     if chunk:
                                         full_reply += chunk
                                         yield json.dumps({"delta": chunk}, ensure_ascii=False) + "\n"
-                                meks:
+                                except Exception:
                                     continue
                 else:
                     yield json.dumps({"delta": f"Groq Hatası (Kod: {res.status_code})"}, ensure_ascii=False) + "\n"
