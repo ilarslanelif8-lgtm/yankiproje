@@ -167,7 +167,8 @@ def chat():
                 return
 
             try:
-                model = genai.GenerativeModel("gemini-1.5-flash", system_instruction=SYSTEM_PROMPT)
+                # Model ismi tam yol olarak güncellendi
+                model = genai.GenerativeModel("models/gemini-1.5-flash", system_instruction=SYSTEM_PROMPT)
                 contents = []
 
                 if needs_live_data:
