@@ -91,13 +91,8 @@ def get_live_market_data():
 def clean_thinking_process(text):
     """
     Gemini'nin dışarı sızdırdığı iç düşünce süreçlerini ve İngilizce notları temizler.
-
-    NOT: Önceki sürümde `r'\* .*?\n'` deseni TÜM madde işaretli ("* ...") satırları
-    siliyordu. Bu sadece sızan iç-düşünce notlarını değil, Gemini'nin madde
-    işaretiyle verdiği gerçek cevap içeriğini (ör. "* Gram Altın: 4200 TL") de
-    yok ediyordu — ekrandaki "kaynaklar var ama fiyatlar yok" hatasının sebebi buydu.
-    Bu yüzden o kör satır tamamen kaldırıldı; sadece bilinen iç-düşünce
-    etiketleriyle başlayan satırlar hedefleniyor.
+    Sadece bilinen iç-düşünce etiketleriyle başlayan satırlar hedefleniyor,
+    gerçek cevap içeriğine (madde işaretli olsa bile) dokunulmuyor.
     """
     if not text:
         return ""
@@ -109,26 +104,44 @@ def clean_thinking_process(text):
     )
     return cleaned.strip()
 
-def format_grounding_sources(response):
-    """Gemini'nin arama sırasında kullandığı kaynakları küçük bir liste halinde döndürür."""
-    try:
-        candidate = response.candidates[0]
-        gm = getattr(candidate, "grounding_metadata", None)
-        if not gm or not getattr(gm, "grounding_chunks", None):
-            return ""
-        links = []
-        for chunk in gm.grounding_chunks:
-            web = getattr(chunk, "web", None)
-            if web and getattr(web, "uri", None):
-                title = getattr(web, "title", None) or web.uri
-                links.append(f"- [{title}]({web.uri})")
-        if not links:
-            return ""
-        # aynı kaynağı iki kere göstermeyelim
-        unique_links = list(dict.fromkeys(links))[:5]
-        return "\n\n**Kaynaklar:**\n" + "\n".join(unique_links)
-    except Exception:
-        return ""
+# NOT: Kaynakça (grounding sources) listesi kullanıcı isteğiyle tamamen kaldırıldı.
+# format_grounding_sources fonksiyonu ve çağrıları silindi; Gemini'nin arama
+# sırasında kullandığı linkler artık cevaba eklenmiyor.
+
+CODE_BLOCK_RE = re.compile(r"```(\w+)?\n(.*?)```", re.DOTALL)
+
+def extract_code_blocks(text):
+    """
+    Cevap içindeki ```dil ... ``` kod bloklarını ayıklar.
+    Frontend bunu kullanarak (örn. html/js/game içerikli bloklar) yan panelde
+    canlı önizleme açabilir. Metin değişmeden kalır; bu sadece ek bir liste döner.
+    """
+    blocks = []
+    for match in CODE_BLOCK_RE.finditer(text or ""):
+        lang = (match.group(1) or "").lower().strip()
+        code = match.group(2)
+        blocks.append({"language": lang, "code": code})
+    return blocks
+
+CODE_SYSTEM_HINT = (
+    "\n\nKod yazman istendiğinde: eksiksiz, hatasız, doğrudan çalışabilir kod üret. "
+    "HTML/JS/oyun gibi tarayıcıda çalışabilecek şeyler istendiğinde bunu TEK bir "
+    "```html``` bloğu içinde, tüm CSS ve JS aynı dosyada olacak şekilde, dışarıdan "
+    "hiçbir dosyaya bağımlı olmadan yaz ki doğrudan bir iframe içinde çalıştırılabilsin. "
+    "Kodu parçalara bölme, açıklamaları kod bloğunun dışına yaz, kod bloğunun içine "
+    "yorum dışında gereksiz metin koyma."
+)
+
+# Arama toolunu her mesajda zorla açmak gecikme yaratıyordu; sadece güncel/gerçek
+# zamanlı bilgi gerektiren mesajlarda devreye alıyoruz.
+SEARCH_TRIGGER_WORDS = [
+    "altın", "altin", "dolar", "euro", "fiyat", "kaç para", "borsa", "kur",
+    "ezan", "namaz", "hava durumu", "haber", "güncel", "bugün", "yarın",
+    "kim kazandı", "sonuç", "maç", "ne zaman", "kaçta", "tarih"
+]
+
+def needs_search(msg_lower):
+    return any(k in msg_lower for k in SEARCH_TRIGGER_WORDS)
 
 @app.route("/")
 @login_required
@@ -216,7 +229,7 @@ def chat():
                 yield json.dumps({"done": True}) + "\n"
                 return
 
-            prompt_text = user_message
+            prompt_text = user_message + CODE_SYSTEM_HINT
             if needs_live_data:
                 live_info = get_live_market_data()
                 if live_info:
@@ -230,43 +243,47 @@ def chat():
                 pil_img = Image.open(BytesIO(img_data))
                 contents.append(pil_img)
 
-            # Hesabındaki aktif Google Gemini modellerini dinamik çekmeye çalışıyoruz:
-            candidate_models = []
-            try:
-                for m in gemini_client.models.list():
-                    actions = getattr(m, "supported_actions", None) or []
-                    if "generateContent" in actions:
-                        candidate_models.append(m.name.replace("models/", ""))
-            except Exception:
-                pass
+            # HIZ: Modelleri artık her istekte ağdan (models.list()) çekmiyoruz —
+            # bu her mesaja gereksiz bir tam ekstra API çağrısı ekliyordu.
+            # En hızlı modelden başlayan sabit, güncel bir liste kullanılıyor.
+            candidate_models = [
+                "gemini-2.5-flash-lite",
+                "gemini-2.5-flash",
+                "gemini-2.0-flash",
+            ]
 
-            # Dinamik çekilemezse güncel bilinen model isimleri:
-            if not candidate_models:
-                candidate_models = [
-                    "gemini-2.5-flash",
-                    "gemini-2.0-flash",
-                    "gemini-1.5-flash",
-                ]
+            # HIZ: Arama tool'u sadece gerçekten güncel bilgi gerektiren mesajlarda
+            # açılıyor. Her mesajda zorla arama yapmak (ör. "merhaba" gibi basit
+            # mesajlarda bile) gözle görülür gecikme yaratıyordu.
+            tools = [SEARCH_TOOL] if needs_search(msg_lower) else []
+            config = types.GenerateContentConfig(tools=tools)
 
             success = False
             last_err = ""
 
-            config = types.GenerateContentConfig(tools=[SEARCH_TOOL])
-
             for m_name in candidate_models:
                 try:
-                    response = gemini_client.models.generate_content(
+                    # Gerçek streaming: her parça geldiği anda kullanıcıya akıtılıyor —
+                    # eskisi gibi tüm cevap bitene kadar beklenmiyor. Bu, ilk kelimenin
+                    # ekrana düşme süresini büyük ölçüde kısaltıyor.
+                    stream = gemini_client.models.generate_content_stream(
                         model=m_name,
                         contents=contents,
                         config=config,
                     )
+                    raw_text = ""
+                    for chunk in stream:
+                        if chunk.text:
+                            raw_text += chunk.text
+                            yield json.dumps({"delta": chunk.text}, ensure_ascii=False) + "\n"
 
-                    if response.text:
-                        raw_text = response.text
-                        clean_text = clean_thinking_process(raw_text)
-                        sources = format_grounding_sources(response)
-                        full_reply = clean_text + sources
-                        yield json.dumps({"delta": clean_text + sources}, ensure_ascii=False) + "\n"
+                    if raw_text:
+                        # Kaydetmeden önce olası iç-düşünce sızıntılarını temizle,
+                        # kod bloklarını çıkar (frontend yan panelde kullanabilir).
+                        full_reply = clean_thinking_process(raw_text)
+                        code_blocks = extract_code_blocks(full_reply)
+                        if code_blocks:
+                            yield json.dumps({"code_blocks": code_blocks}, ensure_ascii=False) + "\n"
 
                     success = True
                     break
