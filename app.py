@@ -11,7 +11,11 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, f
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-import google.generativeai as genai
+
+# --- YENİ: eski "google.generativeai" SDK'sı yerine güncel "google-genai" SDK'sı ---
+# (pip install google-genai)  -- eski "google-generativeai" paketi artık deprecated.
+from google import genai
+from google.genai import types
 
 logging.basicConfig(level=logging.INFO)
 
@@ -33,8 +37,14 @@ MODEL_NAME = "Yankı Hibrit (Gemini + Groq)"
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-if GEMINI_KEY:
-    genai.configure(api_key=GEMINI_KEY)
+# Yeni SDK'da configure() yok; bir Client nesnesi oluşturuluyor.
+gemini_client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
+
+# --- YENİ: Google Search grounding tool'u ---
+# Bu tool açıkken Gemini, cevap vermeden önce gerektiğinde otomatik olarak
+# gerçek zamanlı Google araması yapıyor (haberler, güncel bilgiler, "kim/ne zaman" vs.)
+# Model her mesajda zorla arama yapmıyor; ihtiyaç olduğuna kendisi karar veriyor.
+SEARCH_TOOL = types.Tool(google_search=types.GoogleSearch())
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -63,7 +73,7 @@ with app.app_context():
     db.create_all()
 
 def get_live_market_data():
-    """Canlı altın/finans verisi çeker"""
+    """Canlı altın/finans verisi çeker (Google Search'e ek, kesin rakam garantisi için)"""
     try:
         res = requests.get("https://api.genelpara.com/embed/altin.json", timeout=4)
         if res.status_code == 200:
@@ -85,6 +95,27 @@ def clean_thinking_process(text):
     cleaned = re.sub(r'(\*|\-)?\s*(User question|Context|Persona constraints|Persona|Step \d|Drafting|Greeting|Self-Correction).*?\n', '', text, flags=re.IGNORECASE)
     cleaned = re.sub(r'\* .*?\n', '', cleaned)
     return cleaned.strip()
+
+def format_grounding_sources(response):
+    """Gemini'nin arama sırasında kullandığı kaynakları küçük bir liste halinde döndürür."""
+    try:
+        candidate = response.candidates[0]
+        gm = getattr(candidate, "grounding_metadata", None)
+        if not gm or not getattr(gm, "grounding_chunks", None):
+            return ""
+        links = []
+        for chunk in gm.grounding_chunks:
+            web = getattr(chunk, "web", None)
+            if web and getattr(web, "uri", None):
+                title = getattr(web, "title", None) or web.uri
+                links.append(f"- [{title}]({web.uri})")
+        if not links:
+            return ""
+        # aynı kaynağı iki kere göstermeyelim
+        unique_links = list(dict.fromkeys(links))[:5]
+        return "\n\n**Kaynaklar:**\n" + "\n".join(unique_links)
+    except Exception:
+        return ""
 
 @app.route("/")
 @login_required
@@ -113,7 +144,7 @@ def register():
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "").strip()
-        
+
         if not email or not password:
             flash("Lütfen tüm alanları doldurun!", "warning")
             return redirect(url_for('register'))
@@ -157,27 +188,28 @@ def chat():
     msg_lower = user_message.lower()
     needs_live_data = any(k in msg_lower for k in ["altın", "altin", "gram", "çeyrek", "fiyat", "dolar", "euro"])
 
-    use_gemini = False
-    if image_base64 or needs_live_data:
-        use_gemini = True
+    # --- DEĞİŞTİ: Artık "genel web araması" istendiği için, Gemini key varsa
+    # HER metin mesajı Gemini + Google Search ile işleniyor. Model kendi karar
+    # veriyor gerçekten arama yapıp yapmayacağına (her mesajda zorla aramıyor,
+    # sadece gerektiğinde). Gemini key yoksa Groq'a (aramasız) düşüyoruz.
+    use_gemini = bool(GEMINI_KEY) and (bool(image_base64) or True)
 
     def generate():
         full_reply = ""
-        
+
         if use_gemini:
-            if not GEMINI_KEY:
+            if not gemini_client:
                 yield json.dumps({"delta": "GEMINI_API_KEY bulunamadı."}, ensure_ascii=False) + "\n"
                 yield json.dumps({"done": True}) + "\n"
                 return
 
-            contents = []
             prompt_text = user_message
             if needs_live_data:
                 live_info = get_live_market_data()
                 if live_info:
                     prompt_text += live_info
 
-            contents.append(prompt_text)
+            contents = [prompt_text]
 
             if image_base64 and "," in image_base64:
                 _, encoded = image_base64.split(",", 1)
@@ -185,38 +217,44 @@ def chat():
                 pil_img = Image.open(BytesIO(img_data))
                 contents.append(pil_img)
 
-            # Hesabındaki aktif Google Gemini modellerini dinamik çekiyoruz:
+            # Hesabındaki aktif Google Gemini modellerini dinamik çekmeye çalışıyoruz:
             candidate_models = []
             try:
-                for m in genai.list_models():
-                    if 'generateContent' in m.supported_generation_methods:
-                        candidate_models.append(m.name)
+                for m in gemini_client.models.list():
+                    actions = getattr(m, "supported_actions", None) or []
+                    if "generateContent" in actions:
+                        candidate_models.append(m.name.replace("models/", ""))
             except Exception:
                 pass
 
-            # Eğer dinamik çekilemezse alternatif model isimleri:
+            # Dinamik çekilemezse güncel bilinen model isimleri:
             if not candidate_models:
                 candidate_models = [
-                    "gemini-2.5-flash", 
-                    "gemini-2.0-flash", 
-                    "models/gemini-1.5-flash", 
-                    "models/gemini-1.5-pro"
+                    "gemini-2.5-flash",
+                    "gemini-2.0-flash",
+                    "gemini-1.5-flash",
                 ]
 
             success = False
             last_err = ""
 
+            config = types.GenerateContentConfig(tools=[SEARCH_TOOL])
+
             for m_name in candidate_models:
                 try:
-                    model = genai.GenerativeModel(m_name)
-                    response = model.generate_content(contents, stream=False)
-                    
+                    response = gemini_client.models.generate_content(
+                        model=m_name,
+                        contents=contents,
+                        config=config,
+                    )
+
                     if response.text:
                         raw_text = response.text
                         clean_text = clean_thinking_process(raw_text)
-                        full_reply = clean_text
-                        yield json.dumps({"delta": clean_text}, ensure_ascii=False) + "\n"
-                    
+                        sources = format_grounding_sources(response)
+                        full_reply = clean_text + sources
+                        yield json.dumps({"delta": clean_text + sources}, ensure_ascii=False) + "\n"
+
                     success = True
                     break
                 except Exception as e:
