@@ -33,6 +33,7 @@ login_manager.login_view = 'login'
 
 ASSISTANT_NAME = "Yankı"
 MODEL_NAME = "Yankı Hibrit (Gemini + Groq)"
+FOUNDER_EMAIL = "ilarslanelif8@gmail.com"
 
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
@@ -65,6 +66,7 @@ class ChatMessage(db.Model):
     role = db.Column(db.String(20), nullable=False)
     content = db.Column(db.Text, nullable=False)
     image_url = db.Column(db.Text, nullable=True)
+    file_name = db.Column(db.String(255), nullable=True)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
 
@@ -138,11 +140,61 @@ def format_grounding_sources(response):
         return ""
 
 
+def process_uploaded_file(file_info):
+    """
+    Kullanıcının yüklediği (resim olmayan) dosyayı işler.
+    Dönüş: (extracted_text, gemini_part, display_note)
+      - extracted_text: metin tabanlı dosyalarda (txt/csv/json/md) çıkarılan içerik
+      - gemini_part: PDF gibi ikili dosyalarda Gemini'ye doğrudan verilecek Part nesnesi
+      - display_note: sohbet geçmişinde gösterilecek kısa etiket (📎 dosya-adi.pdf)
+    """
+    if not file_info:
+        return None, None, None
+
+    name = file_info.get("name") or "dosya"
+    mime = (file_info.get("mime") or "").lower()
+    raw_data = file_info.get("data", "")
+
+    if "," in raw_data:
+        raw_data = raw_data.split(",", 1)[1]
+
+    try:
+        file_bytes = base64.b64decode(raw_data)
+    except Exception:
+        return None, None, f"📎 {name} (okunamadı)"
+
+    text_exts = (".txt", ".csv", ".json", ".md", ".log")
+
+    if mime.startswith("text/") or mime == "application/json" or name.lower().endswith(text_exts):
+        try:
+            text = file_bytes.decode("utf-8", errors="ignore")
+            return text[:12000], None, f"📎 {name}"
+        except Exception:
+            pass
+
+    if mime == "application/pdf" or name.lower().endswith(".pdf"):
+        try:
+            part = types.Part.from_bytes(data=file_bytes, mime_type="application/pdf")
+            return None, part, f"📎 {name}"
+        except Exception:
+            return None, None, f"📎 {name} (PDF okunamadı)"
+
+    return None, None, f"📎 {name} (bu dosya türü şu an desteklenmiyor — .txt, .csv, .json, .md, .pdf ve görseller okunabiliyor)"
+
+
 @app.route("/")
 @login_required
 def index():
     history_messages = ChatMessage.query.filter_by(user_id=current_user.id).order_by(ChatMessage.timestamp.asc()).all()
-    return render_template("index.html", model_name=MODEL_NAME, assistant_name=ASSISTANT_NAME, user=current_user, history=history_messages)
+    is_founder = bool(current_user.is_authenticated and current_user.email.lower() == FOUNDER_EMAIL)
+    return render_template(
+        "index.html",
+        model_name=MODEL_NAME,
+        assistant_name=ASSISTANT_NAME,
+        user=current_user,
+        history=history_messages,
+        is_founder=is_founder,
+    )
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -202,11 +254,30 @@ def chat():
     data = request.get_json(force=True) or {}
     user_message = (data.get("message") or "").strip()
     image_base64 = data.get("image")
+    file_info = data.get("file")
 
-    if not user_message and not image_base64:
+    if not user_message and not image_base64 and not file_info:
         return jsonify({"error": "Boş mesaj gönderilemez."}), 400
 
-    user_msg_record = ChatMessage(user_id=current_user.id, role="user", content=user_message, image_url=image_base64)
+    file_text, file_part, file_note = process_uploaded_file(file_info)
+
+    # Modele gönderilecek asıl mesaj: kullanıcının yazdığına, metin tabanlı
+    # dosya içeriği varsa ekleniyor (Groq gibi metin-only modeller de bunu görebilsin diye).
+    effective_user_message = user_message
+    if file_text:
+        effective_user_message = (
+            f"{user_message}\n\n[Yüklenen Dosya - {file_info.get('name', 'dosya')}]:\n{file_text}"
+            if user_message else
+            f"[Yüklenen Dosya - {file_info.get('name', 'dosya')}]:\n{file_text}"
+        )
+
+    user_msg_record = ChatMessage(
+        user_id=current_user.id,
+        role="user",
+        content=user_message,
+        image_url=image_base64,
+        file_name=file_note,
+    )
     db.session.add(user_msg_record)
     db.session.commit()
 
@@ -232,7 +303,11 @@ def chat():
             for m in recent_msgs[:-1]:
                 if m.content:
                     messages.append({"role": m.role, "content": m.content})
-            messages.append({"role": "user", "content": user_message})
+            messages.append({"role": "user", "content": effective_user_message})
+            if image_base64 and not file_text:
+                messages[-1]["content"] += "\n\n(Not: Kullanıcı bir görsel de yükledi, ancak Groq metin modeli görselleri analiz edemiyor.)"
+            if file_info and not file_text and not file_part:
+                messages[-1]["content"] += f"\n\n(Not: '{file_info.get('name','dosya')}' adlı dosya yüklendi ancak bu dosya türü okunamıyor.)"
 
             headers = {
                 "Authorization": f"Bearer {GROQ_KEY}",
@@ -274,7 +349,7 @@ def chat():
         gemini_failed = False
 
         if use_gemini:
-            prompt_text = user_message
+            prompt_text = effective_user_message
             if needs_live_data:
                 live_info = get_live_market_data()
                 if live_info:
@@ -287,6 +362,9 @@ def chat():
                 img_data = base64.b64decode(encoded)
                 pil_img = Image.open(BytesIO(img_data))
                 contents.append(pil_img)
+
+            if file_part is not None:
+                contents.append(file_part)
 
             # Hesabındaki aktif Google Gemini modellerini dinamik çekmeye çalışıyoruz:
             candidate_models = []
