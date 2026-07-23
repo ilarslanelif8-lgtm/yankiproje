@@ -27,15 +27,16 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
 ASSISTANT_NAME = "Yankı"
-MODEL_NAME = "Gemini-Flash"
+MODEL_NAME = "Yankı Hibrit (Gemini + Groq)"
 
 SYSTEM_PROMPT = (
-    "Sen 'Yankı' adında samimi, akıllı ve Türkçe konuşan bir yapay zeka asistansın.\n"
-    "Kullanıcının sorularına net, yardımsever ve içten cevap ver."
+    "Sen 'Yankı' adında son derece zeki, yetenekli ve Türkçe konuşan bir yapay zeka asistansın.\n"
+    "Sorulara net, doğru ve yapıcı yanıtlar ver."
 )
 
-# Gemini API Kurulumu
+GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
+
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
 
@@ -66,14 +67,14 @@ with app.app_context():
     db.create_all()
 
 def get_live_market_data():
-    """Canlı altın/finans verilerini çeker"""
+    """Canlı altın/finans verisi çeker"""
     try:
         res = requests.get("https://api.genelpara.com/embed/altin.json", timeout=4)
         if res.status_code == 200:
             data = res.json()
             ga, c = data.get("GA", {}), data.get("C", {})
             return (
-                f"\n[CANLI BİLGİ - BUGÜNÜN FİYATLARI]: "
+                f"\n[CANLI BİLGİ - GÜNCEL FİYATLAR]: "
                 f"Gram Altın Alış: {ga.get('alis')} TL, Satış: {ga.get('satis')} TL | "
                 f"Çeyrek Altın Alış: {c.get('alis')} TL, Satış: {c.get('satis')} TL"
             )
@@ -115,65 +116,120 @@ def chat():
     image_base64 = data.get("image")
 
     if not user_message and not image_base64:
-        return jsonify({"error": "Boş mesaj verilemez."}), 400
+        return jsonify({"error": "Boş mesaj gönderilemez."}), 400
 
-    # Veritabanına Kaydet
     user_msg_record = ChatMessage(user_id=current_user.id, role="user", content=user_message, image_url=image_base64)
     db.session.add(user_msg_record)
     db.session.commit()
 
+    msg_lower = user_message.lower()
+    needs_live_data = any(k in msg_lower for k in ["altın", "altin", "gram", "çeyrek", "fiyat", "dolar", "euro"])
+
+    # Görev Dağılımı (Routing Logic)
+    use_gemini = False
+    if image_base64 or needs_live_data:
+        use_gemini = True
+
     def generate():
-        if not GEMINI_KEY:
-            yield json.dumps({"delta": "GEMINI_API_KEY eksik! Lütfen Render'a ekleyin."}, ensure_ascii=False) + "\n"
-            yield json.dumps({"done": True}) + "\n"
-            return
+        full_reply = ""
+        
+        # 🟢 GÖRSEL VEYA CANLI BİLGİ -> GEMINI
+        if use_gemini:
+            if not GEMINI_KEY:
+                yield json.dumps({"delta": "GEMINI_API_KEY bulunamadı."}, ensure_ascii=False) + "\n"
+                yield json.dumps({"done": True}) + "\n"
+                return
 
-        try:
-            # Gemini Modelini Çağır
-            model = genai.GenerativeModel("gemini-1.5-flash", system_instruction=SYSTEM_PROMPT)
-            
-            contents = []
-            
-            # Altın/Finans Sorusu Kontrolü
-            msg_lower = user_message.lower()
-            if any(k in msg_lower for k in ["altın", "altin", "gram", "çeyrek", "fiyat"]):
-                live_info = get_live_market_data()
-                if live_info:
-                    user_message += live_info
+            try:
+                model = genai.GenerativeModel("gemini-1.5-flash", system_instruction=SYSTEM_PROMPT)
+                contents = []
 
-            # Görsel Varsa PIL Image Formatına Çevirip Ekle
-            if image_base64 and "," in image_base64:
-                header, encoded = image_base64.split(",", 1)
-                img_data = base64.b64decode(encoded)
-                pil_img = Image.open(BytesIO(img_data))
-                contents.append(pil_img)
+                if needs_live_data:
+                    live_info = get_live_market_data()
+                    if live_info:
+                        user_message_with_data = user_message + live_info
+                        contents.append(user_message_with_data)
+                    else:
+                        contents.append(user_message)
+                elif user_message:
+                    contents.append(user_message)
 
-            if user_message:
-                contents.append(user_message)
-            elif image_base64:
-                contents.append("Bu görseli detaylıca analiz et ve açıkla.")
+                if image_base64 and "," in image_base64:
+                    _, encoded = image_base64.split(",", 1)
+                    img_data = base64.b64decode(encoded)
+                    pil_img = Image.open(BytesIO(img_data))
+                    contents.append(pil_img)
 
-            # Cevabı Canlı (Stream) Akışla Al
-            response = model.generate_content(contents, stream=True)
-            full_reply = ""
+                if not contents and image_base64:
+                    contents.append("Görseli detaylıca incele ve açıkla.")
 
-            for chunk in response:
-                if chunk.text:
-                    full_reply += chunk.text
-                    yield json.dumps({"delta": chunk.text}, ensure_ascii=False) + "\n"
+                response = model.generate_content(contents, stream=True)
+                for chunk in response:
+                    if chunk.text:
+                        full_reply += chunk.text
+                        yield json.dumps({"delta": chunk.text}, ensure_ascii=False) + "\n"
 
-            # Asistan Cevabını Veritabanına Kaydet
-            if full_reply:
-                with app.app_context():
-                    assistant_msg = ChatMessage(user_id=current_user.id, role="assistant", content=full_reply)
-                    db.session.add(assistant_msg)
-                    db.session.commit()
+            except Exception as e:
+                yield json.dumps({"delta": f"Gemini Hatası: {str(e)}"}, ensure_ascii=False) + "\n"
 
-            yield json.dumps({"done": True}) + "\n"
+        # 🔵 KOD YAZMA VE NORMAL SOHBET -> GROQ (Llama 3.3 70B)
+        else:
+            if not GROQ_KEY:
+                yield json.dumps({"delta": "GROQ_API_KEY bulunamadı."}, ensure_ascii=False) + "\n"
+                yield json.dumps({"done": True}) + "\n"
+                return
 
-        except Exception as e:
-            yield json.dumps({"delta": f"\nHata oluştu: {str(e)}"}, ensure_ascii=False) + "\n"
-            yield json.dumps({"done": True}) + "\n"
+            try:
+                recent_msgs = ChatMessage.query.filter_by(user_id=current_user.id).order_by(ChatMessage.timestamp.desc()).limit(6).all()
+                recent_msgs.reverse()
+
+                messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+                for m in recent_msgs[:-1]:
+                    if m.content:
+                        messages.append({"role": m.role, "content": m.content})
+                messages.append({"role": "user", "content": user_message})
+
+                headers = {
+                    "Authorization": f"Bearer {GROQ_KEY}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": "llama-3.3-70b-versatile",
+                    "messages": messages,
+                    "stream": True
+                }
+
+                res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, stream=True, timeout=30)
+                if res.status_code == 200:
+                    for line in res.iter_lines():
+                        if line:
+                            line_str = line.decode('utf-8')
+                            if line_str.startswith("data: "):
+                                data_str = line_str[6:].strip()
+                                if data_str == "[DONE]":
+                                    break
+                                try:
+                                    parsed = json.loads(data_str)
+                                    chunk = parsed['choices'][0]['delta'].get('content', '')
+                                    if chunk:
+                                        full_reply += chunk
+                                        yield json.dumps({"delta": chunk}, ensure_ascii=False) + "\n"
+                                except Exception:
+                                    continue
+                else:
+                    yield json.dumps({"delta": f"Groq Hatası (Kod: {res.status_code})"}, ensure_ascii=False) + "\n"
+
+            except Exception as e:
+                yield json.dumps({"delta": f"Groq Bağlantı Hatası: {str(e)}"}, ensure_ascii=False) + "\n"
+
+        # Yanıtı veritabanına kaydet
+        if full_reply:
+            with app.app_context():
+                assistant_msg = ChatMessage(user_id=current_user.id, role="assistant", content=full_reply)
+                db.session.add(assistant_msg)
+                db.session.commit()
+
+        yield json.dumps({"done": True}) + "\n"
 
     return Response(stream_with_context(generate()), mimetype="application/x-ndjson; charset=utf-8")
 
